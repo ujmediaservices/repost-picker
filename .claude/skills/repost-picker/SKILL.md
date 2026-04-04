@@ -1,13 +1,13 @@
 ---
 name: repost-picker
-description: Pick the N oldest-shared posts from the repost CSV and assign them new future dates
+description: Pick the N oldest-shared posts from the repost CSV, generate social media text via Claude, schedule to Buffer, and assign new future dates
 command: repost
 arguments: "<number_of_posts> <start_date MM/DD/YYYY>"
 ---
 
 # Repost Picker
 
-Pick the blog posts that were shared the furthest back in the past from the social-media repost CSV and schedule them for resharing on consecutive days starting from a given date.
+Pick the blog posts that were shared the furthest back in the past from the social-media repost CSV, fetch each post's content from WordPress, generate social media text via Claude, schedule each post to Buffer, and update the CSV with new dates.
 
 ## Inputs
 
@@ -30,12 +30,16 @@ echo -e "<number_of_posts>\n<start_date>" | python repost_picker.py
 ```
 
 2. The script will:
+   - Read WordPress credentials from Windows Credential Manager (target: `https://unseen-japan.com`)
    - Open `C:\Users\allen\Downloads\uj-repost-content.csv`
    - Find the N oldest posts by the "Last posted - social" column
    - Update each selected post's date to start_date + 1 day, +2 days, etc.
+   - For each post, fetch its content from the WordPress REST API
+   - Send the content to Claude to generate social media text alternatives (two-step: generate alternatives, then extract the best one)
+   - Schedule the best social media text + post URL to Buffer via GraphQL API (mode: shareNext)
    - Re-sort the entire CSV by date descending before saving
-   - Print the selected posts (name and URL)
+   - Print comma-delimited tuples of (post title, post URL, social media text, Buffer post ID)
 
-3. Present the results to the user as a numbered list showing each post's **name** and **URL**.
+3. Present the results to the user as a numbered list showing each post's **title**, **URL**, **Claude-generated social media text**, and **Buffer scheduling status**.
 
-4. Let the user know the CSV has been updated with the new dates.
+4. Let the user know the CSV has been updated with the new dates and the posts have been scheduled in Buffer.
