@@ -75,19 +75,63 @@ def slug_from_url(url: str) -> str:
     return path.split("/")[-1]
 
 
-def fetch_post_content(slug: str, auth: tuple[str, str]) -> str:
+def fetch_post_content(slug: str, auth: tuple[str, str]) -> tuple[str, int | None]:
+    """Fetch post content and featured image ID.
+
+    Returns (plain_text_content, featured_media_id).
+    """
     api_url = f"{WP_SITE}/wp-json/wp/v2/posts"
     resp = requests.get(
         api_url,
-        params={"slug": slug, "_fields": "content"},
+        params={"slug": slug, "_fields": "content,featured_media"},
         auth=auth,
         timeout=30,
     )
     resp.raise_for_status()
     posts = resp.json()
     if not posts:
-        return ""
-    return strip_html(posts[0]["content"]["rendered"])
+        return "", None
+    content = strip_html(posts[0]["content"]["rendered"])
+    featured_media = posts[0].get("featured_media") or None
+    return content, featured_media
+
+
+def download_featured_image(
+    media_id: int, slug: str, auth: tuple[str, str]
+) -> str | None:
+    """Download the featured image for a post to the temp directory.
+
+    Returns the local file path on success, or None.
+    """
+    temp_dir = Path("./temp")
+    temp_dir.mkdir(exist_ok=True)
+
+    # Get media details
+    api_url = f"{WP_SITE}/wp-json/wp/v2/media/{media_id}"
+    resp = requests.get(
+        api_url,
+        params={"_fields": "source_url,mime_type"},
+        auth=auth,
+        timeout=30,
+    )
+    resp.raise_for_status()
+    media = resp.json()
+
+    source_url = media.get("source_url")
+    if not source_url:
+        return None
+
+    # Determine file extension from URL
+    url_path = urlparse(source_url).path
+    ext = Path(url_path).suffix or ".jpg"
+    local_path = temp_dir / f"{slug}{ext}"
+
+    # Download the image
+    img_resp = requests.get(source_url, timeout=60)
+    img_resp.raise_for_status()
+    local_path.write_bytes(img_resp.content)
+
+    return str(local_path)
 
 
 def generate_social_text(
@@ -241,9 +285,20 @@ def pick_reposts(
         slug = slug_from_url(url)
 
         print(f"  Fetching: {title}...", file=sys.stderr)
-        content = fetch_post_content(slug, wp_auth)
+        content, featured_media_id = fetch_post_content(slug, wp_auth)
 
         if content:
+            # Download featured image
+            if featured_media_id:
+                print(f"  Downloading featured image...", file=sys.stderr)
+                img_path = download_featured_image(
+                    featured_media_id, slug, wp_auth
+                )
+                if img_path:
+                    print(f"  Saved: {img_path}", file=sys.stderr)
+                else:
+                    print(f"  WARNING: Could not download featured image.", file=sys.stderr)
+
             print(f"  Generating social text...", file=sys.stderr)
             full_response, best_text = generate_social_text(content, title, url)
 
