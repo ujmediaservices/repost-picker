@@ -24,6 +24,8 @@ BUFFER_THREADS_CHANNEL_ID = "667b1dcd7839e9e87976ad0c"
 BUFFER_X_CHANNEL_ID = "5f371d0a1c14ed2014066090"
 BUFFER_MASTODON_CHANNEL_ID = "6982c8e331b76c40ca2929b5"
 
+DEBUG = False
+
 BLUESKY_CHAR_LIMIT = 300
 
 SOCIAL_PROMPT_TEMPLATE = (
@@ -213,17 +215,24 @@ def _buffer_create_post(variables: dict) -> str:
     }
     """
 
+    payload = {"query": query, "variables": variables}
+
+    if DEBUG:
+        print("\n=== DEBUG: Buffer GraphQL Request ===", flush=True)
+        print("Query:", query.strip(), flush=True)
+        print("Variables:", json.dumps(variables, indent=2, ensure_ascii=False), flush=True)
+        print("=====================================\n", flush=True)
+
     resp = requests.post(
         BUFFER_API_URL,
-        json={"query": query, "variables": variables},
+        json=payload,
         headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         },
         timeout=30,
     )
-    sent_payload = json.loads(resp.request.body)
-    print("Query Sent:\n", sent_payload['query'])
+
     resp.raise_for_status()
     data = resp.json()
 
@@ -249,7 +258,7 @@ def schedule_to_buffer_bluesky(text: str, post_url: str) -> str:
             "text": composed_text,
             "channelId": BUFFER_BLUESKY_CHANNEL_ID,
             "schedulingType": "automatic",
-            "mode": "shareNext",
+            "mode": "addToQueue",
         }
     }
     return _buffer_create_post(variables)
@@ -268,7 +277,7 @@ def schedule_to_buffer_mastodon(
             "text": composed_text,
             "channelId": BUFFER_MASTODON_CHANNEL_ID,
             "schedulingType": "automatic",
-            "mode": "shareNext",
+            "mode": "addToQueue",
         }
     }
     if image_url:
@@ -304,7 +313,7 @@ def schedule_to_buffer_threads(
             "text": text,
             "channelId": BUFFER_THREADS_CHANNEL_ID,
             "schedulingType": "automatic",
-            "mode": "shareNext",
+            "mode": "addToQueue",
             "metadata": {
                 "threads": {
                     "type": "post",
@@ -346,7 +355,7 @@ def schedule_to_buffer_x(
             "text": text,
             "channelId": BUFFER_X_CHANNEL_ID,
             "schedulingType": "automatic",
-            "mode": "shareNext",
+            "mode": "addToQueue",
             "metadata": {
                 "twitter": {
                     "thread": [thread_post_1, thread_post_2],
@@ -478,23 +487,28 @@ def pick_reposts(
 
 
 def main() -> None:
-    if len(sys.argv) != 4:
-        print("Usage: python repost_picker.py <num_essays> <num_travel> <start_date MM/DD/YYYY>")
+    global DEBUG
+    args = [a for a in sys.argv[1:] if a != "--debug"]
+    if "--debug" in sys.argv:
+        DEBUG = True
+
+    if len(args) != 3:
+        print("Usage: python repost_picker.py [--debug] <num_essays> <num_travel> <start_date MM/DD/YYYY>")
         sys.exit(1)
 
     try:
-        num_essays = int(sys.argv[1])
+        num_essays = int(args[0])
     except ValueError:
         print("First argument (num_essays) must be a valid integer.")
         sys.exit(1)
 
     try:
-        num_travel = int(sys.argv[2])
+        num_travel = int(args[1])
     except ValueError:
         print("Second argument (num_travel) must be a valid integer.")
         sys.exit(1)
 
-    start_date = parse_date(sys.argv[3])
+    start_date = parse_date(args[2])
     if start_date is None:
         print("Invalid date format. Use MM/DD/YYYY.")
         sys.exit(1)
