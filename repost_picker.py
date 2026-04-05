@@ -10,13 +10,19 @@ from urllib.parse import urlparse
 import anthropic
 import keyring
 import requests
+import json
 
 CSV_PATH = Path(r".\uj-repost-content.csv")
 DATE_COL = "Last posted - social"
+TYPE_COL = "Post type"
+ESSAY_TYPE = "Essay"
 WP_SITE = "https://unseen-japan.com"
 CREDENTIAL_TARGET = "https://unseen-japan.com"
 BUFFER_API_URL = "https://api.buffer.com"
-BUFFER_CHANNEL_ID = "66997475602872be45e429ee"
+BUFFER_BLUESKY_CHANNEL_ID = "66997475602872be45e429ee"
+BUFFER_THREADS_CHANNEL_ID = "667b1dcd7839e9e87976ad0c"
+BUFFER_X_CHANNEL_ID = "5f371d0a1c14ed2014066090"
+BUFFER_MASTODON_CHANNEL_ID = "6982c8e331b76c40ca2929b5"
 
 BLUESKY_CHAR_LIMIT = 300
 
@@ -26,7 +32,9 @@ SOCIAL_PROMPT_TEMPLATE = (
     "slightly to fit character count or to add missing post context (e.g., "
     "someone's full name), keeping original tone. Do not be overly "
     "promotional, cute, or use marketing jargon or emojis. Be factual, as we "
-    "are a serious news and media organization. Generate several alternatives "
+    "are a serious news and media organization. Reword phrases such as "
+    "'recent' and 'new' to avoid time references - e.g., instead of 'a recent survey' or "
+    " 'a new survey,' say 'one survey.' Generate several alternatives "
     "and mark the best one.\n\n"
     "IMPORTANT: The post text will be followed by a URL ({url_length} chars) "
     "and two line breaks. The TOTAL post including text + two line breaks + "
@@ -96,42 +104,23 @@ def fetch_post_content(slug: str, auth: tuple[str, str]) -> tuple[str, int | Non
     return content, featured_media
 
 
-def download_featured_image(
-    media_id: int, slug: str, auth: tuple[str, str]
+def get_featured_image_url(
+    media_id: int, auth: tuple[str, str]
 ) -> str | None:
-    """Download the featured image for a post to the temp directory.
+    """Get the source URL of a post's featured image.
 
-    Returns the local file path on success, or None.
+    Returns the image URL on success, or None.
     """
-    temp_dir = Path("./temp")
-    temp_dir.mkdir(exist_ok=True)
-
-    # Get media details
     api_url = f"{WP_SITE}/wp-json/wp/v2/media/{media_id}"
     resp = requests.get(
         api_url,
-        params={"_fields": "source_url,mime_type"},
+        params={"_fields": "source_url"},
         auth=auth,
         timeout=30,
     )
     resp.raise_for_status()
     media = resp.json()
-
-    source_url = media.get("source_url")
-    if not source_url:
-        return None
-
-    # Determine file extension from URL
-    url_path = urlparse(source_url).path
-    ext = Path(url_path).suffix or ".jpg"
-    local_path = temp_dir / f"{slug}{ext}"
-
-    # Download the image
-    img_resp = requests.get(source_url, timeout=60)
-    img_resp.raise_for_status()
-    local_path.write_bytes(img_resp.content)
-
-    return str(local_path)
+    return media.get("source_url") or None
 
 
 def generate_social_text(
@@ -195,16 +184,18 @@ def generate_social_text(
     return full_response, best_text
 
 
-def schedule_to_buffer(text: str, post_url: str) -> str:
-    """Schedule a post to Buffer via GraphQL API.
+def _buffer_api_key() -> str | None:
+    return os.environ.get("BUFFER_API_KEY")
 
-    Returns the Buffer post ID on success, or an error message.
+
+def _buffer_create_post(variables: dict) -> str:
+    """Send a createPost mutation to Buffer.
+
+    Returns the post ID on success, or an error string.
     """
-    api_key = os.environ.get("BUFFER_API_KEY")
+    api_key = _buffer_api_key()
     if not api_key:
         return "ERROR: BUFFER_API_KEY environment variable not set"
-
-    composed_text = f"{text}\n\n{post_url}"
 
     query = """
     mutation CreatePost($input: CreatePostInput!) {
@@ -222,15 +213,6 @@ def schedule_to_buffer(text: str, post_url: str) -> str:
     }
     """
 
-    variables = {
-        "input": {
-            "text": composed_text,
-            "channelId": BUFFER_CHANNEL_ID,
-            "schedulingType": "automatic",
-            "mode": "shareNext",
-        }
-    }
-
     resp = requests.post(
         BUFFER_API_URL,
         json={"query": query, "variables": variables},
@@ -240,6 +222,8 @@ def schedule_to_buffer(text: str, post_url: str) -> str:
         },
         timeout=30,
     )
+    sent_payload = json.loads(resp.request.body)
+    print("Query Sent:\n", sent_payload['query'])
     resp.raise_for_status()
     data = resp.json()
 
@@ -254,8 +238,142 @@ def schedule_to_buffer(text: str, post_url: str) -> str:
     return f"ERROR: Unexpected response: {data}"
 
 
+def schedule_to_buffer_bluesky(text: str, post_url: str) -> str:
+    """Schedule a post to Buffer Bluesky channel.
+
+    Returns the Buffer post ID on success, or an error message.
+    """
+    composed_text = f"{text}\n\n{post_url}"
+    variables = {
+        "input": {
+            "text": composed_text,
+            "channelId": BUFFER_BLUESKY_CHANNEL_ID,
+            "schedulingType": "automatic",
+            "mode": "shareNext",
+        }
+    }
+    return _buffer_create_post(variables)
+
+
+def schedule_to_buffer_mastodon(
+    text: str, post_url: str, image_url: str | None
+) -> str:
+    """Schedule a post to Buffer Mastodon channel with featured image.
+
+    Returns the Buffer post ID on success, or an error message.
+    """
+    composed_text = f"{text}\n\n{post_url}"
+    variables = {
+        "input": {
+            "text": composed_text,
+            "channelId": BUFFER_MASTODON_CHANNEL_ID,
+            "schedulingType": "automatic",
+            "mode": "shareNext",
+        }
+    }
+    if image_url:
+        variables["input"]["assets"] = {"images": [{"url": image_url}]}
+    return _buffer_create_post(variables)
+
+
+def schedule_to_buffer_threads(
+    text: str, post_title: str, post_url: str, image_url: str | None
+) -> str:
+    """Schedule a threaded post to Buffer Threads channel.
+
+    Thread post 1: social media text + featured image
+    Thread post 2: post title + two newlines + post URL
+
+    Returns the Buffer post ID on success, or an error message.
+    """
+    # Thread post 1: social media text + featured image
+    thread_post_1 = {"text": text}
+    if image_url:
+        thread_post_1["assets"] = {"images": [{"url": image_url}]}
+
+    # Thread post 2: post title + link
+    thread_post_2 = {
+        "text": post_title,
+        "assets": {
+            "link": {"url": post_url},
+        },
+    }
+
+    variables = {
+        "input": {
+            "text": text,
+            "channelId": BUFFER_THREADS_CHANNEL_ID,
+            "schedulingType": "automatic",
+            "mode": "shareNext",
+            "metadata": {
+                "threads": {
+                    "type": "post",
+                    "topic": "Japan",
+                    "thread": [thread_post_1, thread_post_2],
+                }
+            },
+        }
+    }
+
+    return _buffer_create_post(variables)
+
+
+def schedule_to_buffer_x(
+    text: str, post_title: str, post_url: str, image_url: str | None
+) -> str:
+    """Schedule a threaded post to Buffer X channel.
+
+    Thread post 1: social media text + featured image
+    Thread post 2: post title + link
+
+    Returns the Buffer post ID on success, or an error message.
+    """
+    # Thread post 1: social media text + featured image
+    thread_post_1 = {"text": text}
+    if image_url:
+        thread_post_1["assets"] = {"images": [{"url": image_url}]}
+
+    # Thread post 2: post title + link
+    thread_post_2 = {
+        "text": post_title,
+        "assets": {
+            "link": {"url": post_url},
+        },
+    }
+
+    variables = {
+        "input": {
+            "text": text,
+            "channelId": BUFFER_X_CHANNEL_ID,
+            "schedulingType": "automatic",
+            "mode": "shareNext",
+            "metadata": {
+                "twitter": {
+                    "thread": [thread_post_1, thread_post_2],
+                }
+            },
+        }
+    }
+
+    return _buffer_create_post(variables)
+
+
+def interleave(primary: list, secondary: list) -> list:
+    """Interleave two lists, giving priority to primary (appears first)."""
+    result = []
+    pi, si = 0, 0
+    while pi < len(primary) or si < len(secondary):
+        if pi < len(primary):
+            result.append(primary[pi])
+            pi += 1
+        if si < len(secondary):
+            result.append(secondary[si])
+            si += 1
+    return result
+
+
 def pick_reposts(
-    num_posts: int, start_date: datetime
+    num_essays: int, num_travel: int, start_date: datetime
 ) -> list[tuple[str, str, str, str]]:
     wp_auth = get_wp_credentials()
 
@@ -263,16 +381,26 @@ def pick_reposts(
         reader = csv.DictReader(f)
         rows = list(reader)
 
-    # Build list of (parsed_date, index) for rows that have a date
-    dated = []
+    # Split into essays and travel promo posts by Post type
+    essays = []
+    travel = []
     for i, row in enumerate(rows):
         dt = parse_date(row[DATE_COL])
-        if dt is not None:
-            dated.append((dt, i))
+        if dt is None:
+            continue
+        if row.get(TYPE_COL, "").strip() == ESSAY_TYPE:
+            essays.append((dt, i))
+        else:
+            travel.append((dt, i))
 
-    # Sort by date ascending (oldest first) and take the top n
-    dated.sort(key=lambda x: x[0])
-    selected = dated[:num_posts]
+    # Sort each by date ascending (oldest first) and take the requested count
+    essays.sort(key=lambda x: x[0])
+    travel.sort(key=lambda x: x[0])
+    selected_essays = essays[:num_essays]
+    selected_travel = travel[:num_travel]
+
+    # Interleave with travel promo posts as priority (first)
+    selected = interleave(selected_travel, selected_essays)
 
     # Update dates, generate social text, and schedule to Buffer
     results: list[tuple[str, str, str, str]] = []
@@ -289,21 +417,43 @@ def pick_reposts(
 
         if content:
             # Download featured image
+            img_url = None
             if featured_media_id:
-                print(f"  Downloading featured image...", file=sys.stderr)
-                img_path = download_featured_image(
-                    featured_media_id, slug, wp_auth
-                )
-                if img_path:
-                    print(f"  Saved: {img_path}", file=sys.stderr)
+                print(f"  Fetching featured image URL...", file=sys.stderr)
+                img_url = get_featured_image_url(featured_media_id, wp_auth)
+                if img_url:
+                    print(f"  Image: {img_url}", file=sys.stderr)
                 else:
-                    print(f"  WARNING: Could not download featured image.", file=sys.stderr)
+                    print(f"  WARNING: Could not get featured image URL.", file=sys.stderr)
 
             print(f"  Generating social text...", file=sys.stderr)
             full_response, best_text = generate_social_text(content, title, url)
 
-            print(f"  Scheduling to Buffer...", file=sys.stderr)
-            buffer_result = schedule_to_buffer(best_text, url)
+            # Schedule to Bluesky channel
+            print(f"  Scheduling to Buffer (Bluesky)...", file=sys.stderr)
+            bluesky_result = schedule_to_buffer_bluesky(best_text, url)
+            print(f"  Bluesky: {bluesky_result}", file=sys.stderr)
+
+            # Schedule to Mastodon channel (with featured image)
+            print(f"  Scheduling to Buffer (Mastodon)...", file=sys.stderr)
+            mastodon_result = schedule_to_buffer_mastodon(best_text, url, img_url)
+            print(f"  Mastodon: {mastodon_result}", file=sys.stderr)
+
+            # Schedule to Threads channel (threaded post with image)
+            print(f"  Scheduling to Buffer (Threads)...", file=sys.stderr)
+            threads_result = schedule_to_buffer_threads(
+                best_text, title, url, img_url
+            )
+            print(f"  Threads: {threads_result}", file=sys.stderr)
+
+            # Schedule to X channel (threaded post with image)
+            print(f"  Scheduling to Buffer (X)...", file=sys.stderr)
+            x_result = schedule_to_buffer_x(
+                best_text, title, url, img_url
+            )
+            print(f"  X: {x_result}", file=sys.stderr)
+
+            buffer_result = f"Bluesky: {bluesky_result}, Mastodon: {mastodon_result}, Threads: {threads_result}, X: {x_result}"
         else:
             full_response = "(Could not retrieve post content)"
             best_text = ""
@@ -328,19 +478,28 @@ def pick_reposts(
 
 
 def main() -> None:
-    try:
-        num_posts = int(input("Number of posts to retrieve: "))
-    except ValueError:
-        print("Please enter a valid integer.")
+    if len(sys.argv) != 4:
+        print("Usage: python repost_picker.py <num_essays> <num_travel> <start_date MM/DD/YYYY>")
         sys.exit(1)
 
-    date_str = input("Date to search from (MM/DD/YYYY): ").strip()
-    start_date = parse_date(date_str)
+    try:
+        num_essays = int(sys.argv[1])
+    except ValueError:
+        print("First argument (num_essays) must be a valid integer.")
+        sys.exit(1)
+
+    try:
+        num_travel = int(sys.argv[2])
+    except ValueError:
+        print("Second argument (num_travel) must be a valid integer.")
+        sys.exit(1)
+
+    start_date = parse_date(sys.argv[3])
     if start_date is None:
         print("Invalid date format. Use MM/DD/YYYY.")
         sys.exit(1)
 
-    results = pick_reposts(num_posts, start_date)
+    results = pick_reposts(num_essays, num_travel, start_date)
 
     print(f"\n{len(results)} post(s) selected:\n")
     for title, url, social_text, buffer_id in results:
