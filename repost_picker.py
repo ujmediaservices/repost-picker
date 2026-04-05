@@ -1,6 +1,8 @@
 import csv
+import json
 import os
 import re
+import subprocess
 import sys
 from datetime import datetime, timedelta
 from html import unescape
@@ -10,7 +12,6 @@ from urllib.parse import urlparse
 import anthropic
 import keyring
 import requests
-import json
 
 CSV_PATH = Path(r".\uj-repost-content.csv")
 DATE_COL = "Last posted - social"
@@ -381,9 +382,14 @@ def interleave(primary: list, secondary: list) -> list:
     return result
 
 
-def pick_reposts(
+def generate_posts(
     num_essays: int, num_travel: int, start_date: datetime
-) -> list[tuple[str, str, str, str]]:
+) -> tuple[list[dict], list, list[tuple]]:
+    """Phase 1: Select posts, fetch content, generate social text.
+
+    Returns (posts_data, csv_rows, selected_indices) where posts_data is a
+    list of dicts ready for JSON review.
+    """
     wp_auth = get_wp_credentials()
 
     with open(CSV_PATH, newline="", encoding="utf-8-sig") as f:
@@ -411,12 +417,10 @@ def pick_reposts(
     # Interleave with travel promo posts as priority (first)
     selected = interleave(selected_travel, selected_essays)
 
-    # Update dates, generate social text, and schedule to Buffer
-    results: list[tuple[str, str, str, str]] = []
+    # Generate social text for each post
+    posts_data: list[dict] = []
+    selected_indices: list[tuple] = []  # (offset, idx) for CSV updates
     for offset, (_, idx) in enumerate(selected, start=1):
-        new_date = start_date + timedelta(days=offset)
-        rows[idx][DATE_COL] = new_date.strftime("%m/%d/%Y")
-
         title = rows[idx]["Post Name"]
         url = rows[idx]["Post Link"]
         slug = slug_from_url(url)
@@ -424,9 +428,9 @@ def pick_reposts(
         print(f"  Fetching: {title}...", file=sys.stderr)
         content, featured_media_id = fetch_post_content(slug, wp_auth)
 
+        img_url = None
+        social_text = ""
         if content:
-            # Download featured image
-            img_url = None
             if featured_media_id:
                 print(f"  Fetching featured image URL...", file=sys.stderr)
                 img_url = get_featured_image_url(featured_media_id, wp_auth)
@@ -436,39 +440,74 @@ def pick_reposts(
                     print(f"  WARNING: Could not get featured image URL.", file=sys.stderr)
 
             print(f"  Generating social text...", file=sys.stderr)
-            full_response, best_text = generate_social_text(content, title, url)
+            _full_response, best_text = generate_social_text(content, title, url)
+            social_text = best_text
 
-            # Schedule to Bluesky channel
-            print(f"  Scheduling to Buffer (Bluesky)...", file=sys.stderr)
-            bluesky_result = schedule_to_buffer_bluesky(best_text, url)
-            print(f"  Bluesky: {bluesky_result}", file=sys.stderr)
+        posts_data.append({
+            "title": title,
+            "url": url,
+            "featured_image": img_url or "",
+            "social_text": social_text,
+        })
+        selected_indices.append((offset, idx))
 
-            # Schedule to Mastodon channel (with featured image)
-            print(f"  Scheduling to Buffer (Mastodon)...", file=sys.stderr)
-            mastodon_result = schedule_to_buffer_mastodon(best_text, url, img_url)
-            print(f"  Mastodon: {mastodon_result}", file=sys.stderr)
+    return posts_data, rows, selected_indices
 
-            # Schedule to Threads channel (threaded post with image)
-            print(f"  Scheduling to Buffer (Threads)...", file=sys.stderr)
-            threads_result = schedule_to_buffer_threads(
-                best_text, title, url, img_url
-            )
-            print(f"  Threads: {threads_result}", file=sys.stderr)
 
-            # Schedule to X channel (threaded post with image)
-            print(f"  Scheduling to Buffer (X)...", file=sys.stderr)
-            x_result = schedule_to_buffer_x(
-                best_text, title, url, img_url
-            )
-            print(f"  X: {x_result}", file=sys.stderr)
+def open_in_editor(file_path: str) -> None:
+    """Open a file in Notepad and wait for the editor to close."""
+    print(f"  Opening {file_path} in Notepad for review...", file=sys.stderr)
+    print("  Edit the social_text fields as needed, save, and close Notepad.", file=sys.stderr)
+    subprocess.run(["notepad", file_path], check=True)
 
-            buffer_result = f"Bluesky: {bluesky_result}, Mastodon: {mastodon_result}, Threads: {threads_result}, X: {x_result}"
-        else:
-            full_response = "(Could not retrieve post content)"
-            best_text = ""
-            buffer_result = "SKIPPED"
 
-        results.append((title, url, full_response, buffer_result))
+def schedule_posts(
+    posts_data: list[dict], rows: list, selected_indices: list[tuple],
+    start_date: datetime
+) -> list[tuple[str, str, str, str]]:
+    """Phase 2: Read edited posts and schedule to Buffer, update CSV."""
+    results: list[tuple[str, str, str, str]] = []
+
+    for post, (offset, idx) in zip(posts_data, selected_indices):
+        title = post["title"]
+        url = post["url"]
+        img_url = post["featured_image"] or None
+        best_text = post["social_text"]
+
+        # Update CSV date
+        new_date = start_date + timedelta(days=offset)
+        rows[idx][DATE_COL] = new_date.strftime("%m/%d/%Y")
+
+        if not best_text:
+            results.append((title, url, "", "SKIPPED"))
+            continue
+
+        # Schedule to Bluesky channel
+        print(f"  Scheduling to Buffer (Bluesky): {title}...", file=sys.stderr)
+        bluesky_result = schedule_to_buffer_bluesky(best_text, url)
+        print(f"  Bluesky: {bluesky_result}", file=sys.stderr)
+
+        # Schedule to Mastodon channel (with featured image)
+        print(f"  Scheduling to Buffer (Mastodon)...", file=sys.stderr)
+        mastodon_result = schedule_to_buffer_mastodon(best_text, url, img_url)
+        print(f"  Mastodon: {mastodon_result}", file=sys.stderr)
+
+        # Schedule to Threads channel (threaded post with image)
+        print(f"  Scheduling to Buffer (Threads)...", file=sys.stderr)
+        threads_result = schedule_to_buffer_threads(
+            best_text, title, url, img_url
+        )
+        print(f"  Threads: {threads_result}", file=sys.stderr)
+
+        # Schedule to X channel (threaded post with image)
+        print(f"  Scheduling to Buffer (X)...", file=sys.stderr)
+        x_result = schedule_to_buffer_x(
+            best_text, title, url, img_url
+        )
+        print(f"  X: {x_result}", file=sys.stderr)
+
+        buffer_result = f"Bluesky: {bluesky_result}, Mastodon: {mastodon_result}, Threads: {threads_result}, X: {x_result}"
+        results.append((title, url, best_text, buffer_result))
 
     # Sort rows by date descending before saving (undated rows go to the end)
     rows.sort(
@@ -513,9 +552,32 @@ def main() -> None:
         print("Invalid date format. Use MM/DD/YYYY.")
         sys.exit(1)
 
-    results = pick_reposts(num_essays, num_travel, start_date)
+    # Phase 1: Generate social text for all posts
+    print("Phase 1: Generating social media posts...", file=sys.stderr)
+    posts_data, rows, selected_indices = generate_posts(
+        num_essays, num_travel, start_date
+    )
 
-    print(f"\n{len(results)} post(s) selected:\n")
+    # Save to JSON for review in VS Code
+    review_dir = Path("C:/temp")
+    review_dir.mkdir(exist_ok=True)
+    review_path = str(review_dir / "repost_review.json")
+    file = open(review_path, "w", encoding="utf-8")
+    json.dump(posts_data, file, indent=2, ensure_ascii=False)
+    file.close()
+
+    # Open in VS Code and wait for user to finish editing
+    open_in_editor(review_path)
+
+    # Read back edited JSON
+    with open(review_path, "r", encoding="utf-8") as f:
+        edited_posts = json.load(f)
+
+    # Phase 2: Schedule edited posts to Buffer
+    print("\nPhase 2: Scheduling posts to Buffer...", file=sys.stderr)
+    results = schedule_posts(edited_posts, rows, selected_indices, start_date)
+
+    print(f"\n{len(results)} post(s) scheduled:\n")
     for title, url, social_text, buffer_id in results:
         print(f"{title}, {url}, {social_text}, {buffer_id}\n")
 
