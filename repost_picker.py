@@ -13,18 +13,20 @@ import anthropic
 import keyring
 import requests
 
+import buffer_api
+from buffer_api import (
+    schedule_to_buffer_bluesky,
+    schedule_to_buffer_mastodon,
+    schedule_to_buffer_threads,
+    schedule_to_buffer_x,
+)
+
 CSV_PATH = Path(r".\uj-repost-content.csv")
 DATE_COL = "Last posted - social"
 TYPE_COL = "Post type"
 ESSAY_TYPE = "Essay"
 WP_SITE = "https://unseen-japan.com"
 CREDENTIAL_TARGET = "https://unseen-japan.com"
-BUFFER_API_URL = "https://api.buffer.com"
-BUFFER_BLUESKY_CHANNEL_ID = "66997475602872be45e429ee"
-BUFFER_THREADS_CHANNEL_ID = "667b1dcd7839e9e87976ad0c"
-BUFFER_X_CHANNEL_ID = "5f371d0a1c14ed2014066090"
-BUFFER_MASTODON_CHANNEL_ID = "6982c8e331b76c40ca2929b5"
-
 DEBUG = False
 
 BLUESKY_CHAR_LIMIT = 300
@@ -187,186 +189,6 @@ def generate_social_text(
     return full_response, best_text
 
 
-def _buffer_api_key() -> str | None:
-    return os.environ.get("BUFFER_API_KEY")
-
-
-def _buffer_create_post(variables: dict) -> str:
-    """Send a createPost mutation to Buffer.
-
-    Returns the post ID on success, or an error string.
-    """
-    api_key = _buffer_api_key()
-    if not api_key:
-        return "ERROR: BUFFER_API_KEY environment variable not set"
-
-    query = """
-    mutation CreatePost($input: CreatePostInput!) {
-      createPost(input: $input) {
-        ... on PostActionSuccess {
-          post {
-            id
-            text
-          }
-        }
-        ... on MutationError {
-          message
-        }
-      }
-    }
-    """
-
-    payload = {"query": query, "variables": variables}
-
-    if DEBUG:
-        print("\n=== DEBUG: Buffer GraphQL Request ===", flush=True)
-        print("Query:", query.strip(), flush=True)
-        print("Variables:", json.dumps(variables, indent=2, ensure_ascii=False), flush=True)
-        print("=====================================\n", flush=True)
-
-    resp = requests.post(
-        BUFFER_API_URL,
-        json=payload,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        timeout=30,
-    )
-
-    resp.raise_for_status()
-    data = resp.json()
-
-    if "errors" in data:
-        return f"ERROR: {data['errors']}"
-
-    result = data.get("data", {}).get("createPost", {})
-    if "post" in result:
-        return result["post"]["id"]
-    if "message" in result:
-        return f"ERROR: {result['message']}"
-    return f"ERROR: Unexpected response: {data}"
-
-
-def schedule_to_buffer_bluesky(text: str, post_url: str) -> str:
-    """Schedule a post to Buffer Bluesky channel.
-
-    Returns the Buffer post ID on success, or an error message.
-    """
-    composed_text = f"{text}\n\n{post_url}"
-    variables = {
-        "input": {
-            "text": composed_text,
-            "channelId": BUFFER_BLUESKY_CHANNEL_ID,
-            "schedulingType": "automatic",
-            "mode": "addToQueue",
-        }
-    }
-    return _buffer_create_post(variables)
-
-
-def schedule_to_buffer_mastodon(
-    text: str, post_url: str, image_url: str | None
-) -> str:
-    """Schedule a post to Buffer Mastodon channel with featured image.
-
-    Returns the Buffer post ID on success, or an error message.
-    """
-    composed_text = f"{text}\n\n{post_url}"
-    variables = {
-        "input": {
-            "text": composed_text,
-            "channelId": BUFFER_MASTODON_CHANNEL_ID,
-            "schedulingType": "automatic",
-            "mode": "addToQueue",
-        }
-    }
-    if image_url:
-        variables["input"]["assets"] = {"images": [{"url": image_url}]}
-    return _buffer_create_post(variables)
-
-
-def schedule_to_buffer_threads(
-    text: str, post_title: str, post_url: str, image_url: str | None
-) -> str:
-    """Schedule a threaded post to Buffer Threads channel.
-
-    Thread post 1: social media text + featured image
-    Thread post 2: post title + two newlines + post URL
-
-    Returns the Buffer post ID on success, or an error message.
-    """
-    # Thread post 1: social media text + featured image
-    thread_post_1 = {"text": text}
-    if image_url:
-        thread_post_1["assets"] = {"images": [{"url": image_url}]}
-
-    # Thread post 2: post title + link
-    thread_post_2 = {
-        "text": post_title,
-        "assets": {
-            "link": {"url": post_url},
-        },
-    }
-
-    variables = {
-        "input": {
-            "text": text,
-            "channelId": BUFFER_THREADS_CHANNEL_ID,
-            "schedulingType": "automatic",
-            "mode": "addToQueue",
-            "metadata": {
-                "threads": {
-                    "type": "post",
-                    "topic": "Japan",
-                    "thread": [thread_post_1, thread_post_2],
-                }
-            },
-        }
-    }
-
-    return _buffer_create_post(variables)
-
-
-def schedule_to_buffer_x(
-    text: str, post_title: str, post_url: str, image_url: str | None
-) -> str:
-    """Schedule a threaded post to Buffer X channel.
-
-    Thread post 1: social media text + featured image
-    Thread post 2: post title + link
-
-    Returns the Buffer post ID on success, or an error message.
-    """
-    # Thread post 1: social media text + featured image
-    thread_post_1 = {"text": text}
-    if image_url:
-        thread_post_1["assets"] = {"images": [{"url": image_url}]}
-
-    # Thread post 2: post title + link
-    thread_post_2 = {
-        "text": post_title,
-        "assets": {
-            "link": {"url": post_url},
-        },
-    }
-
-    variables = {
-        "input": {
-            "text": text,
-            "channelId": BUFFER_X_CHANNEL_ID,
-            "schedulingType": "automatic",
-            "mode": "addToQueue",
-            "metadata": {
-                "twitter": {
-                    "thread": [thread_post_1, thread_post_2],
-                }
-            },
-        }
-    }
-
-    return _buffer_create_post(variables)
-
 
 def interleave(primary: list, secondary: list) -> list:
     """Interleave two lists, giving priority to primary (appears first)."""
@@ -482,27 +304,29 @@ def schedule_posts(
             results.append((title, url, "", "SKIPPED"))
             continue
 
+        BUFFER_MODE = "addToQueue"
+
         # Schedule to Bluesky channel
         print(f"  Scheduling to Buffer (Bluesky): {title}...", file=sys.stderr)
-        bluesky_result = schedule_to_buffer_bluesky(best_text, url)
+        bluesky_result = schedule_to_buffer_bluesky(best_text, url, BUFFER_MODE)
         print(f"  Bluesky: {bluesky_result}", file=sys.stderr)
 
         # Schedule to Mastodon channel (with featured image)
         print(f"  Scheduling to Buffer (Mastodon)...", file=sys.stderr)
-        mastodon_result = schedule_to_buffer_mastodon(best_text, url, img_url)
+        mastodon_result = schedule_to_buffer_mastodon(best_text, url, img_url, BUFFER_MODE)
         print(f"  Mastodon: {mastodon_result}", file=sys.stderr)
 
         # Schedule to Threads channel (threaded post with image)
         print(f"  Scheduling to Buffer (Threads)...", file=sys.stderr)
         threads_result = schedule_to_buffer_threads(
-            best_text, title, url, img_url
+            best_text, title, url, img_url, BUFFER_MODE
         )
         print(f"  Threads: {threads_result}", file=sys.stderr)
 
         # Schedule to X channel (threaded post with image)
         print(f"  Scheduling to Buffer (X)...", file=sys.stderr)
         x_result = schedule_to_buffer_x(
-            best_text, title, url, img_url
+            best_text, title, url, img_url, BUFFER_MODE
         )
         print(f"  X: {x_result}", file=sys.stderr)
 
@@ -530,6 +354,7 @@ def main() -> None:
     args = [a for a in sys.argv[1:] if a != "--debug"]
     if "--debug" in sys.argv:
         DEBUG = True
+        buffer_api.debug = True
 
     if len(args) != 3:
         print("Usage: python repost_picker.py [--debug] <num_essays> <num_travel> <start_date MM/DD/YYYY>")
