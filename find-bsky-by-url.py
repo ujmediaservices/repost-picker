@@ -80,6 +80,7 @@ def search_sent_posts(api_key: str, org_id: str, search_text: str) -> list[dict]
             status
             sentAt
             dueAt
+            externalLink
           }
         }
         pageInfo {
@@ -153,6 +154,7 @@ def main() -> None:
     for post in matches:
         print(f"  ID: {post['id']}")
         print(f"  Sent: {post.get('sentAt', 'N/A')}")
+        print(f"  URL: {post.get('externalLink', 'N/A')}")
         print(f"  Text: {post.get('text', '')[:200]}")
         print()
 

@@ -20,7 +20,6 @@ from buffer_api import (
     schedule_to_buffer_x,
 )
 
-DATA_PATH = Path(r".\uj-repost-content.json")
 DEBUG = False
 
 BLUESKY_CHAR_LIMIT = 300
@@ -94,25 +93,38 @@ def slug_from_url(url: str) -> str:
     return path.split("/")[-1]
 
 
-def fetch_post_content(slug: str, wp_url: str, auth: tuple[str, str]) -> tuple[str, int | None]:
+def fetch_post_content(
+    slug: str, wp_url: str, auth: tuple[str, str]
+) -> tuple[str, int | None, str]:
     """Fetch post content and featured image ID.
 
-    Returns (plain_text_content, featured_media_id).
+    Searches posts first, then pages if not found.
+
+    Returns (plain_text_content, featured_media_id, raw_html).
     """
-    api_url = f"{wp_url}/wp-json/wp/v2/posts"
-    resp = requests.get(
-        api_url,
-        params={"slug": slug, "_fields": "content,featured_media"},
-        auth=auth,
-        timeout=30,
-    )
-    resp.raise_for_status()
-    posts = resp.json()
-    if not posts:
-        return "", None
-    content = strip_html(posts[0]["content"]["rendered"])
-    featured_media = posts[0].get("featured_media") or None
-    return content, featured_media
+    for endpoint in ("posts", "pages"):
+        api_url = f"{wp_url}/wp-json/wp/v2/{endpoint}"
+        resp = requests.get(
+            api_url,
+            params={"slug": slug, "_fields": "content,featured_media"},
+            auth=auth,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        results = resp.json()
+        if results:
+            raw_html = results[0]["content"]["rendered"]
+            content = strip_html(raw_html)
+            featured_media = results[0].get("featured_media") or None
+            return content, featured_media, raw_html
+
+    return "", None, ""
+
+
+def extract_first_image_url(html: str) -> str | None:
+    """Extract the first <img> src URL from HTML content."""
+    match = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', html)
+    return match.group(1) if match else None
 
 
 def get_featured_image_url(
@@ -257,7 +269,7 @@ def select_posts_from_config(
 
 
 def generate_posts(
-    config: dict,
+    config: dict, data_path: Path,
 ) -> tuple[list[dict], list, list[tuple[int, int, str, str | None]]]:
     """Phase 1: Select posts, fetch content, generate social text.
 
@@ -267,20 +279,20 @@ def generate_posts(
     wp_url, wp_user, wp_pass = get_wp_config()
     wp_auth = (wp_user, wp_pass)
 
-    with open(DATA_PATH, "r", encoding="utf-8") as f:
+    with open(data_path, "r", encoding="utf-8") as f:
         rows = json.load(f)
 
     selected = select_posts_from_config(config, rows)
 
     # Generate social text for each post
     posts_data: list[dict] = []
-    for offset, idx in selected:
+    for offset, idx, _mode, _due_at in selected:
         title = rows[idx]["name"]
         url = rows[idx]["url"]
         slug = slug_from_url(url)
 
         print(f"  Fetching: {title}...", file=sys.stderr)
-        content, featured_media_id = fetch_post_content(slug, wp_url, wp_auth)
+        content, featured_media_id, raw_html = fetch_post_content(slug, wp_url, wp_auth)
 
         img_url = None
         social_text = ""
@@ -290,9 +302,15 @@ def generate_posts(
                 print(f"  Fetching featured image URL...", file=sys.stderr)
                 img_url = get_featured_image_url(featured_media_id, wp_url, wp_auth)
                 if img_url:
-                    print(f"  Image: {img_url}", file=sys.stderr)
-                else:
-                    print(f"  WARNING: Could not get featured image URL.", file=sys.stderr)
+                    print(f"  Featured image: {img_url}", file=sys.stderr)
+
+            if not img_url and raw_html:
+                img_url = extract_first_image_url(raw_html)
+                if img_url:
+                    print(f"  Image from content: {img_url}", file=sys.stderr)
+
+            if not img_url:
+                print(f"  WARNING: No image found.", file=sys.stderr)
 
             if static_text:
                 print(f"  Using static text.", file=sys.stderr)
@@ -319,9 +337,28 @@ def wait_for_user_edit(file_path: str) -> None:
     input("  Press Enter when done to continue scheduling...")
 
 
+def write_grouped_json(rows: list[dict], data_path: Path) -> None:
+    """Write rows as pretty-printed JSON with blank lines between type sections."""
+    with open(data_path, "w", encoding="utf-8") as f:
+        f.write("[\n")
+        prev_type = None
+        for i, row in enumerate(rows):
+            cur_type = row.get("type", "")
+            if prev_type is not None and cur_type != prev_type:
+                f.write("\n")
+            prev_type = cur_type
+            entry = json.dumps(row, indent=4, ensure_ascii=False)
+            # Indent the whole block by 2 spaces
+            indented = "\n".join("  " + line for line in entry.splitlines())
+            comma = "," if i < len(rows) - 1 else ""
+            f.write(f"{indented}{comma}\n")
+        f.write("]\n")
+
+
 def schedule_posts(
     posts_data: list[dict], rows: list,
-    selected_indices: list[tuple[int, int, str, str | None]], config: dict
+    selected_indices: list[tuple[int, int, str, str | None]],
+    config: dict, data_path: Path
 ) -> list[tuple[str, str, str, str]]:
     """Phase 2: Read edited posts and schedule to Buffer, update data file."""
     start_date = parse_date(config["startDate"])
@@ -370,32 +407,44 @@ def schedule_posts(
         buffer_result = f"Bluesky: {bluesky_result}, Mastodon: {mastodon_result}, Threads: {threads_result}, X: {x_result}"
         results.append((title, url, best_text, buffer_result))
 
-    # Sort rows by date descending before saving (undated rows go to the end)
-    rows.sort(
-        key=lambda r: parse_date(r["last_posted_social"]) or datetime.min,
-        reverse=True,
-    )
+    # Sort by type ascending, then by date descending within each type
+    def _sort_key(r: dict) -> tuple[str, str]:
+        t = r.get("type", "")
+        dt = parse_date(r.get("last_posted_social", ""))
+        date_val = dt.strftime("%Y%m%d") if dt else "00000000"
+        inv_date = "".join(str(9 - int(c)) for c in date_val)
+        return (t, inv_date)
 
-    # Write the updated JSON back
-    with open(DATA_PATH, "w", encoding="utf-8") as f:
-        json.dump(rows, f, indent=2, ensure_ascii=False)
+    rows.sort(key=_sort_key)
+
+    # Write the updated JSON with visual section separators
+    write_grouped_json(rows, data_path)
 
     return results
 
 
 def main() -> None:
     global DEBUG
-    args = [a for a in sys.argv[1:] if a != "--debug"]
-    if "--debug" in sys.argv:
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Select and schedule repost content to social media via Buffer."
+    )
+    parser.add_argument("--config", required=True, help="Path to the config JSON file")
+    parser.add_argument("--repost-file", required=True, help="Path to the repost data JSON file")
+    parser.add_argument("--debug", action="store_true", help="Dump Buffer GraphQL requests to stdout")
+    parsed = parser.parse_args()
+
+    if parsed.debug:
         DEBUG = True
         buffer_api.debug = True
 
-    if len(args) != 2 or args[0] != "--config":
-        print("Usage: python repost_picker.py [--debug] --config <config.json>")
+    data_path = Path(parsed.repost_file)
+    if not data_path.exists():
+        print(f"ERROR: Repost file not found: {data_path}", file=sys.stderr)
         sys.exit(1)
 
-    config_path = args[1]
-    with open(config_path, "r", encoding="utf-8") as f:
+    with open(parsed.config, "r", encoding="utf-8") as f:
         config = json.load(f)
 
     # Validate config
@@ -411,7 +460,7 @@ def main() -> None:
 
     # Phase 1: Generate social text for all posts
     print("Phase 1: Generating social media posts...", file=sys.stderr)
-    posts_data, rows, selected_indices = generate_posts(config)
+    posts_data, rows, selected_indices = generate_posts(config, data_path)
 
     # Save to JSON for review
     review_path = os.path.join(tempfile.gettempdir(), f"repost_review_{uuid.uuid4().hex[:8]}.json")
@@ -427,7 +476,7 @@ def main() -> None:
 
     # Phase 2: Schedule edited posts to Buffer
     print("\nPhase 2: Scheduling posts to Buffer...", file=sys.stderr)
-    results = schedule_posts(edited_posts, rows, selected_indices, config)
+    results = schedule_posts(edited_posts, rows, selected_indices, config, data_path)
 
     print(f"\n{len(results)} post(s) scheduled:\n")
     for title, url, social_text, buffer_id in results:
