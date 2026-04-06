@@ -2,6 +2,8 @@
 
 import json
 import os
+import sys
+import time
 
 import requests
 
@@ -21,6 +23,9 @@ VALID_MODES = (
 )
 
 debug = False
+
+MAX_RETRIES = 5
+INITIAL_BACKOFF = 1  # seconds
 
 
 def _buffer_api_key() -> str | None:
@@ -60,17 +65,31 @@ def _buffer_create_post(variables: dict) -> str:
         print("Variables:", json.dumps(variables, indent=2, ensure_ascii=False), flush=True)
         print("=====================================\n", flush=True)
 
-    resp = requests.post(
-        BUFFER_API_URL,
-        json=payload,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        timeout=30,
-    )
+    for attempt in range(MAX_RETRIES):
+        try:
+            resp = requests.post(
+                BUFFER_API_URL,
+                json=payload,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                timeout=30,
+            )
+            if resp.status_code == 429:
+                wait = INITIAL_BACKOFF * (2 ** attempt)
+                print(f"  Buffer rate limited. Retrying in {wait}s...", file=sys.stderr)
+                time.sleep(wait)
+                continue
+            resp.raise_for_status()
+            break
+        except (requests.ConnectionError, requests.Timeout, OSError) as e:
+            wait = INITIAL_BACKOFF * (2 ** attempt)
+            print(f"  Buffer request error: {e}. Retrying in {wait}s...", file=sys.stderr)
+            time.sleep(wait)
+    else:
+        return "ERROR: Max retries exceeded"
 
-    resp.raise_for_status()
     data = resp.json()
 
     if "errors" in data:
