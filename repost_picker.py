@@ -2,15 +2,15 @@ import csv
 import json
 import os
 import re
-import subprocess
 import sys
+import tempfile
+import uuid
 from datetime import datetime, timedelta
 from html import unescape
 from pathlib import Path
 from urllib.parse import urlparse
 
 import anthropic
-import keyring
 import requests
 
 import buffer_api
@@ -25,8 +25,6 @@ CSV_PATH = Path(r".\uj-repost-content.csv")
 DATE_COL = "Last posted - social"
 TYPE_COL = "Post type"
 ESSAY_TYPE = "Essay"
-WP_SITE = "https://unseen-japan.com"
-CREDENTIAL_TARGET = "https://unseen-japan.com"
 DEBUG = False
 
 BLUESKY_CHAR_LIMIT = 300
@@ -71,16 +69,28 @@ def strip_html(html: str) -> str:
     return unescape(text).strip()
 
 
-def get_wp_credentials() -> tuple[str, str]:
-    cred = keyring.get_credential(CREDENTIAL_TARGET, None)
-    if cred is None:
+def get_wp_config() -> tuple[str, str, str]:
+    """Read WordPress URL, username, and password from environment variables.
+
+    Returns (wp_url, username, password).
+    """
+    wp_url = os.environ.get("WORDPRESS_URL")
+    username = os.environ.get("WORDPRESS_USERNAME")
+    password = os.environ.get("WORDPRESS_PASSWORD")
+    missing = []
+    if not wp_url:
+        missing.append("WORDPRESS_URL")
+    if not username:
+        missing.append("WORDPRESS_USERNAME")
+    if not password:
+        missing.append("WORDPRESS_PASSWORD")
+    if missing:
         print(
-            f"No credential found in Windows Credential Manager "
-            f"for '{CREDENTIAL_TARGET}'.",
+            f"Missing environment variable(s): {', '.join(missing)}",
             file=sys.stderr,
         )
         sys.exit(1)
-    return cred.username, cred.password
+    return wp_url, username, password
 
 
 def slug_from_url(url: str) -> str:
@@ -88,12 +98,12 @@ def slug_from_url(url: str) -> str:
     return path.split("/")[-1]
 
 
-def fetch_post_content(slug: str, auth: tuple[str, str]) -> tuple[str, int | None]:
+def fetch_post_content(slug: str, wp_url: str, auth: tuple[str, str]) -> tuple[str, int | None]:
     """Fetch post content and featured image ID.
 
     Returns (plain_text_content, featured_media_id).
     """
-    api_url = f"{WP_SITE}/wp-json/wp/v2/posts"
+    api_url = f"{wp_url}/wp-json/wp/v2/posts"
     resp = requests.get(
         api_url,
         params={"slug": slug, "_fields": "content,featured_media"},
@@ -110,13 +120,13 @@ def fetch_post_content(slug: str, auth: tuple[str, str]) -> tuple[str, int | Non
 
 
 def get_featured_image_url(
-    media_id: int, auth: tuple[str, str]
+    media_id: int, wp_url: str, auth: tuple[str, str]
 ) -> str | None:
     """Get the source URL of a post's featured image.
 
     Returns the image URL on success, or None.
     """
-    api_url = f"{WP_SITE}/wp-json/wp/v2/media/{media_id}"
+    api_url = f"{wp_url}/wp-json/wp/v2/media/{media_id}"
     resp = requests.get(
         api_url,
         params={"_fields": "source_url"},
@@ -212,7 +222,8 @@ def generate_posts(
     Returns (posts_data, csv_rows, selected_indices) where posts_data is a
     list of dicts ready for JSON review.
     """
-    wp_auth = get_wp_credentials()
+    wp_url, wp_user, wp_pass = get_wp_config()
+    wp_auth = (wp_user, wp_pass)
 
     with open(CSV_PATH, newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
@@ -248,14 +259,14 @@ def generate_posts(
         slug = slug_from_url(url)
 
         print(f"  Fetching: {title}...", file=sys.stderr)
-        content, featured_media_id = fetch_post_content(slug, wp_auth)
+        content, featured_media_id = fetch_post_content(slug, wp_url, wp_auth)
 
         img_url = None
         social_text = ""
         if content:
             if featured_media_id:
                 print(f"  Fetching featured image URL...", file=sys.stderr)
-                img_url = get_featured_image_url(featured_media_id, wp_auth)
+                img_url = get_featured_image_url(featured_media_id, wp_url, wp_auth)
                 if img_url:
                     print(f"  Image: {img_url}", file=sys.stderr)
                 else:
@@ -276,11 +287,11 @@ def generate_posts(
     return posts_data, rows, selected_indices
 
 
-def open_in_editor(file_path: str) -> None:
-    """Open a file in Notepad and wait for the editor to close."""
-    print(f"  Opening {file_path} in Notepad for review...", file=sys.stderr)
-    print("  Edit the social_text fields as needed, save, and close Notepad.", file=sys.stderr)
-    subprocess.run(["notepad", file_path], check=True)
+def wait_for_user_edit(file_path: str) -> None:
+    """Prompt the user to edit a file and wait for them to press Enter."""
+    print(f"\n  Review file ready for editing:\n  {file_path}\n", file=sys.stderr)
+    print("  Edit the social_text fields as needed, then save the file.", file=sys.stderr)
+    input("  Press Enter when done to continue scheduling...")
 
 
 def schedule_posts(
@@ -383,16 +394,13 @@ def main() -> None:
         num_essays, num_travel, start_date
     )
 
-    # Save to JSON for review in VS Code
-    review_dir = Path("C:/temp")
-    review_dir.mkdir(exist_ok=True)
-    review_path = str(review_dir / "repost_review.json")
-    file = open(review_path, "w", encoding="utf-8")
-    json.dump(posts_data, file, indent=2, ensure_ascii=False)
-    file.close()
+    # Save to JSON for review
+    review_path = os.path.join(tempfile.gettempdir(), f"repost_review_{uuid.uuid4().hex[:8]}.json")
+    with open(review_path, "w", encoding="utf-8") as f:
+        json.dump(posts_data, f, indent=2, ensure_ascii=False)
 
-    # Open in VS Code and wait for user to finish editing
-    open_in_editor(review_path)
+    # Wait for user to edit the file
+    wait_for_user_edit(review_path)
 
     # Read back edited JSON
     with open(review_path, "r", encoding="utf-8") as f:
