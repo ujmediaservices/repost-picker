@@ -1,4 +1,3 @@
-import csv
 import json
 import os
 import re
@@ -21,9 +20,7 @@ from buffer_api import (
     schedule_to_buffer_x,
 )
 
-CSV_PATH = Path(r".\uj-repost-content.csv")
-DATE_COL = "Last posted - social"
-TYPE_COL = "Post type"
+DATA_PATH = Path(r".\uj-repost-content.json")
 ESSAY_TYPE = "Essay"
 DEBUG = False
 
@@ -219,24 +216,23 @@ def generate_posts(
 ) -> tuple[list[dict], list, list[tuple]]:
     """Phase 1: Select posts, fetch content, generate social text.
 
-    Returns (posts_data, csv_rows, selected_indices) where posts_data is a
+    Returns (posts_data, data_rows, selected_indices) where posts_data is a
     list of dicts ready for JSON review.
     """
     wp_url, wp_user, wp_pass = get_wp_config()
     wp_auth = (wp_user, wp_pass)
 
-    with open(CSV_PATH, newline="", encoding="utf-8-sig") as f:
-        reader = csv.DictReader(f)
-        rows = list(reader)
+    with open(DATA_PATH, "r", encoding="utf-8") as f:
+        rows = json.load(f)
 
-    # Split into essays and travel promo posts by Post type
+    # Split into essays and travel promo posts by type
     essays = []
     travel = []
     for i, row in enumerate(rows):
-        dt = parse_date(row[DATE_COL])
+        dt = parse_date(row["last_posted_social"])
         if dt is None:
             continue
-        if row.get(TYPE_COL, "").strip() == ESSAY_TYPE:
+        if row.get("type", "").strip() == ESSAY_TYPE:
             essays.append((dt, i))
         else:
             travel.append((dt, i))
@@ -252,10 +248,10 @@ def generate_posts(
 
     # Generate social text for each post
     posts_data: list[dict] = []
-    selected_indices: list[tuple] = []  # (offset, idx) for CSV updates
+    selected_indices: list[tuple] = []  # (offset, idx) for data updates
     for offset, (_, idx) in enumerate(selected, start=1):
-        title = rows[idx]["Post Name"]
-        url = rows[idx]["Post Link"]
+        title = rows[idx]["name"]
+        url = rows[idx]["url"]
         slug = slug_from_url(url)
 
         print(f"  Fetching: {title}...", file=sys.stderr)
@@ -298,7 +294,7 @@ def schedule_posts(
     posts_data: list[dict], rows: list, selected_indices: list[tuple],
     start_date: datetime
 ) -> list[tuple[str, str, str, str]]:
-    """Phase 2: Read edited posts and schedule to Buffer, update CSV."""
+    """Phase 2: Read edited posts and schedule to Buffer, update data file."""
     results: list[tuple[str, str, str, str]] = []
 
     for post, (offset, idx) in zip(posts_data, selected_indices):
@@ -307,9 +303,9 @@ def schedule_posts(
         img_url = post["featured_image"] or None
         best_text = post["social_text"]
 
-        # Update CSV date
+        # Update date in data
         new_date = start_date + timedelta(days=offset)
-        rows[idx][DATE_COL] = new_date.strftime("%m/%d/%Y")
+        rows[idx]["last_posted_social"] = new_date.strftime("%m/%d/%Y")
 
         if not best_text:
             results.append((title, url, "", "SKIPPED"))
@@ -346,16 +342,13 @@ def schedule_posts(
 
     # Sort rows by date descending before saving (undated rows go to the end)
     rows.sort(
-        key=lambda r: parse_date(r[DATE_COL]) or datetime.min,
+        key=lambda r: parse_date(r["last_posted_social"]) or datetime.min,
         reverse=True,
     )
 
-    # Write the updated CSV back
-    fieldnames = list(rows[0].keys())
-    with open(CSV_PATH, "w", newline="", encoding="utf-8-sig") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(rows)
+    # Write the updated JSON back
+    with open(DATA_PATH, "w", encoding="utf-8") as f:
+        json.dump(rows, f, indent=2, ensure_ascii=False)
 
     return results
 
