@@ -1,0 +1,20 @@
+{
+    "defaultMode": "addToQueue",
+    "startDate": "05/01/2026",
+    "reposts": [
+        {
+            "post_type": ["Essay"],
+            "count": 2
+        },
+        {
+            "post_type": ["Travel", "Japanese", "Food"],
+            "count": 3
+        },
+        {
+            "post_type": ["ToursPromo"],
+            "count": 1,
+            "mode": "customScheduled",
+            "due_at": "05/03/2026 09:00AM"
+        }
+    ]
+}

@@ -91,7 +91,9 @@ def _validate_mode(mode: str) -> None:
         )
 
 
-def schedule_to_buffer_bluesky(text: str, post_url: str, mode: str) -> str:
+def schedule_to_buffer_bluesky(
+    text: str, post_url: str, mode: str, due_at: str | None = None
+) -> str:
     """Schedule a post to Buffer Bluesky channel.
 
     Returns the Buffer post ID on success, or an error message.
@@ -106,11 +108,14 @@ def schedule_to_buffer_bluesky(text: str, post_url: str, mode: str) -> str:
             "mode": mode,
         }
     }
+    if due_at:
+        variables["input"]["dueAt"] = due_at
     return _buffer_create_post(variables)
 
 
 def schedule_to_buffer_mastodon(
-    text: str, post_url: str, image_url: str | None, mode: str
+    text: str, post_url: str, image_url: str | None, mode: str,
+    due_at: str | None = None
 ) -> str:
     """Schedule a post to Buffer Mastodon channel with featured image.
 
@@ -126,6 +131,8 @@ def schedule_to_buffer_mastodon(
             "mode": mode,
         }
     }
+    if due_at:
+        variables["input"]["dueAt"] = due_at
     if image_url:
         variables["input"]["assets"] = {"images": [{"url": image_url}]}
     return _buffer_create_post(variables)
@@ -133,7 +140,7 @@ def schedule_to_buffer_mastodon(
 
 def schedule_to_buffer_threads(
     text: str, post_title: str, post_url: str, image_url: str | None,
-    mode: str
+    mode: str, due_at: str | None = None
 ) -> str:
     """Schedule a threaded post to Buffer Threads channel.
 
@@ -171,13 +178,15 @@ def schedule_to_buffer_threads(
             },
         }
     }
+    if due_at:
+        variables["input"]["dueAt"] = due_at
 
     return _buffer_create_post(variables)
 
 
 def schedule_to_buffer_x(
     text: str, post_title: str, post_url: str, image_url: str | None,
-    mode: str
+    mode: str, due_at: str | None = None
 ) -> str:
     """Schedule a threaded post to Buffer X channel.
 
@@ -213,5 +222,7 @@ def schedule_to_buffer_x(
             },
         }
     }
+    if due_at:
+        variables["input"]["dueAt"] = due_at
 
     return _buffer_create_post(variables)

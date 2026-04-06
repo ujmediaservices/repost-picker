@@ -21,7 +21,6 @@ from buffer_api import (
 )
 
 DATA_PATH = Path(r".\uj-repost-content.json")
-ESSAY_TYPE = "Essay"
 DEBUG = False
 
 BLUESKY_CHAR_LIMIT = 300
@@ -197,23 +196,69 @@ def generate_social_text(
 
 
 
-def interleave(primary: list, secondary: list) -> list:
-    """Interleave two lists, giving priority to primary (appears first)."""
-    result = []
-    pi, si = 0, 0
-    while pi < len(primary) or si < len(secondary):
-        if pi < len(primary):
-            result.append(primary[pi])
-            pi += 1
-        if si < len(secondary):
-            result.append(secondary[si])
-            si += 1
-    return result
+def parse_due_at(due_at_str: str) -> str:
+    """Parse a due_at string in MM/DD/YYYY HH:MMAM/PM format to ISO 8601 UTC."""
+    dt = datetime.strptime(due_at_str.strip(), "%m/%d/%Y %I:%M%p")
+    return dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+
+def select_posts_from_config(
+    config: dict, rows: list
+) -> list[tuple[int, int, str, str | None]]:
+    """Select posts according to the config roadmap.
+
+    Each entry in config["reposts"] specifies post_type(s) and a count.
+    Posts are selected in config array order, oldest first within each group.
+
+    Returns a list of (offset, row_index, mode, due_at_iso) tuples.
+    """
+    default_mode = config.get("defaultMode", "addToQueue")
+    already_selected: set[int] = set()
+    selected: list[tuple[int, int, str, str | None]] = []
+    offset = 1
+
+    for entry in config["reposts"]:
+        post_types = [t.strip() for t in entry["post_type"]]
+        count = entry.get("count", 1)
+        entry_mode = entry.get("mode", default_mode)
+
+        # Parse due_at if mode is customScheduled
+        due_at_iso = None
+        if entry_mode == "customScheduled":
+            due_at_str = entry.get("due_at")
+            if not due_at_str:
+                print(
+                    f"ERROR: mode 'customScheduled' requires 'due_at' field "
+                    f"for post_type {post_types}.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            due_at_iso = parse_due_at(due_at_str)
+
+        # Find matching rows with dates, excluding already-selected
+        candidates = []
+        for i, row in enumerate(rows):
+            if i in already_selected:
+                continue
+            dt = parse_date(row["last_posted_social"])
+            if dt is None:
+                continue
+            if row.get("type", "").strip() in post_types:
+                candidates.append((dt, i))
+
+        # Sort by date ascending (oldest first) and take requested count
+        candidates.sort(key=lambda x: x[0])
+        for _, idx in candidates[:count]:
+            selected.append((offset, idx, entry_mode, due_at_iso))
+            already_selected.add(idx)
+            offset += 1
+
+    return selected
 
 
 def generate_posts(
-    num_essays: int, num_travel: int, start_date: datetime
-) -> tuple[list[dict], list, list[tuple]]:
+    config: dict,
+) -> tuple[list[dict], list, list[tuple[int, int, str, str | None]]]:
     """Phase 1: Select posts, fetch content, generate social text.
 
     Returns (posts_data, data_rows, selected_indices) where posts_data is a
@@ -225,31 +270,11 @@ def generate_posts(
     with open(DATA_PATH, "r", encoding="utf-8") as f:
         rows = json.load(f)
 
-    # Split into essays and travel promo posts by type
-    essays = []
-    travel = []
-    for i, row in enumerate(rows):
-        dt = parse_date(row["last_posted_social"])
-        if dt is None:
-            continue
-        if row.get("type", "").strip() == ESSAY_TYPE:
-            essays.append((dt, i))
-        else:
-            travel.append((dt, i))
-
-    # Sort each by date ascending (oldest first) and take the requested count
-    essays.sort(key=lambda x: x[0])
-    travel.sort(key=lambda x: x[0])
-    selected_essays = essays[:num_essays]
-    selected_travel = travel[:num_travel]
-
-    # Interleave with travel promo posts as priority (first)
-    selected = interleave(selected_travel, selected_essays)
+    selected = select_posts_from_config(config, rows)
 
     # Generate social text for each post
     posts_data: list[dict] = []
-    selected_indices: list[tuple] = []  # (offset, idx) for data updates
-    for offset, (_, idx) in enumerate(selected, start=1):
+    for offset, idx in selected:
         title = rows[idx]["name"]
         url = rows[idx]["url"]
         slug = slug_from_url(url)
@@ -259,6 +284,7 @@ def generate_posts(
 
         img_url = None
         social_text = ""
+        static_text = rows[idx].get("static_text", "").strip()
         if content:
             if featured_media_id:
                 print(f"  Fetching featured image URL...", file=sys.stderr)
@@ -268,9 +294,13 @@ def generate_posts(
                 else:
                     print(f"  WARNING: Could not get featured image URL.", file=sys.stderr)
 
-            print(f"  Generating social text...", file=sys.stderr)
-            _full_response, best_text = generate_social_text(content, title, url)
-            social_text = best_text
+            if static_text:
+                print(f"  Using static text.", file=sys.stderr)
+                social_text = static_text
+            else:
+                print(f"  Generating social text...", file=sys.stderr)
+                _full_response, best_text = generate_social_text(content, title, url)
+                social_text = best_text
 
         posts_data.append({
             "title": title,
@@ -278,9 +308,8 @@ def generate_posts(
             "featured_image": img_url or "",
             "social_text": social_text,
         })
-        selected_indices.append((offset, idx))
 
-    return posts_data, rows, selected_indices
+    return posts_data, rows, selected
 
 
 def wait_for_user_edit(file_path: str) -> None:
@@ -291,13 +320,14 @@ def wait_for_user_edit(file_path: str) -> None:
 
 
 def schedule_posts(
-    posts_data: list[dict], rows: list, selected_indices: list[tuple],
-    start_date: datetime
+    posts_data: list[dict], rows: list,
+    selected_indices: list[tuple[int, int, str, str | None]], config: dict
 ) -> list[tuple[str, str, str, str]]:
     """Phase 2: Read edited posts and schedule to Buffer, update data file."""
+    start_date = parse_date(config["startDate"])
     results: list[tuple[str, str, str, str]] = []
 
-    for post, (offset, idx) in zip(posts_data, selected_indices):
+    for post, (offset, idx, buffer_mode, due_at) in zip(posts_data, selected_indices):
         title = post["title"]
         url = post["url"]
         img_url = post["featured_image"] or None
@@ -311,29 +341,29 @@ def schedule_posts(
             results.append((title, url, "", "SKIPPED"))
             continue
 
-        BUFFER_MODE = "addToQueue"
+        mode_label = f" ({buffer_mode})" if buffer_mode == "customScheduled" else ""
 
         # Schedule to Bluesky channel
-        print(f"  Scheduling to Buffer (Bluesky): {title}...", file=sys.stderr)
-        bluesky_result = schedule_to_buffer_bluesky(best_text, url, BUFFER_MODE)
+        print(f"  Scheduling to Buffer (Bluesky){mode_label}: {title}...", file=sys.stderr)
+        bluesky_result = schedule_to_buffer_bluesky(best_text, url, buffer_mode, due_at)
         print(f"  Bluesky: {bluesky_result}", file=sys.stderr)
 
         # Schedule to Mastodon channel (with featured image)
-        print(f"  Scheduling to Buffer (Mastodon)...", file=sys.stderr)
-        mastodon_result = schedule_to_buffer_mastodon(best_text, url, img_url, BUFFER_MODE)
+        print(f"  Scheduling to Buffer (Mastodon){mode_label}...", file=sys.stderr)
+        mastodon_result = schedule_to_buffer_mastodon(best_text, url, img_url, buffer_mode, due_at)
         print(f"  Mastodon: {mastodon_result}", file=sys.stderr)
 
         # Schedule to Threads channel (threaded post with image)
-        print(f"  Scheduling to Buffer (Threads)...", file=sys.stderr)
+        print(f"  Scheduling to Buffer (Threads){mode_label}...", file=sys.stderr)
         threads_result = schedule_to_buffer_threads(
-            best_text, title, url, img_url, BUFFER_MODE
+            best_text, title, url, img_url, buffer_mode, due_at
         )
         print(f"  Threads: {threads_result}", file=sys.stderr)
 
         # Schedule to X channel (threaded post with image)
-        print(f"  Scheduling to Buffer (X)...", file=sys.stderr)
+        print(f"  Scheduling to Buffer (X){mode_label}...", file=sys.stderr)
         x_result = schedule_to_buffer_x(
-            best_text, title, url, img_url, BUFFER_MODE
+            best_text, title, url, img_url, buffer_mode, due_at
         )
         print(f"  X: {x_result}", file=sys.stderr)
 
@@ -360,32 +390,28 @@ def main() -> None:
         DEBUG = True
         buffer_api.debug = True
 
-    if len(args) != 3:
-        print("Usage: python repost_picker.py [--debug] <num_essays> <num_travel> <start_date MM/DD/YYYY>")
+    if len(args) != 2 or args[0] != "--config":
+        print("Usage: python repost_picker.py [--debug] --config <config.json>")
         sys.exit(1)
 
-    try:
-        num_essays = int(args[0])
-    except ValueError:
-        print("First argument (num_essays) must be a valid integer.")
-        sys.exit(1)
+    config_path = args[1]
+    with open(config_path, "r", encoding="utf-8") as f:
+        config = json.load(f)
 
-    try:
-        num_travel = int(args[1])
-    except ValueError:
-        print("Second argument (num_travel) must be a valid integer.")
+    # Validate config
+    if "startDate" not in config:
+        print("Config must include 'startDate'.", file=sys.stderr)
         sys.exit(1)
-
-    start_date = parse_date(args[2])
-    if start_date is None:
-        print("Invalid date format. Use MM/DD/YYYY.")
+    if parse_date(config["startDate"]) is None:
+        print("Invalid startDate format. Use MM/DD/YYYY.", file=sys.stderr)
+        sys.exit(1)
+    if "reposts" not in config or not config["reposts"]:
+        print("Config must include a non-empty 'reposts' array.", file=sys.stderr)
         sys.exit(1)
 
     # Phase 1: Generate social text for all posts
     print("Phase 1: Generating social media posts...", file=sys.stderr)
-    posts_data, rows, selected_indices = generate_posts(
-        num_essays, num_travel, start_date
-    )
+    posts_data, rows, selected_indices = generate_posts(config)
 
     # Save to JSON for review
     review_path = os.path.join(tempfile.gettempdir(), f"repost_review_{uuid.uuid4().hex[:8]}.json")
@@ -401,7 +427,7 @@ def main() -> None:
 
     # Phase 2: Schedule edited posts to Buffer
     print("\nPhase 2: Scheduling posts to Buffer...", file=sys.stderr)
-    results = schedule_posts(edited_posts, rows, selected_indices, start_date)
+    results = schedule_posts(edited_posts, rows, selected_indices, config)
 
     print(f"\n{len(results)} post(s) scheduled:\n")
     for title, url, social_text, buffer_id in results:
