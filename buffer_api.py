@@ -23,6 +23,7 @@ VALID_MODES = (
 )
 
 debug = False
+save_drafts = False
 
 MAX_RETRIES = 5
 INITIAL_BACKOFF = 1  # seconds
@@ -56,6 +57,9 @@ def _buffer_create_post(variables: dict) -> str:
       }
     }
     """
+
+    if save_drafts:
+        variables["input"]["saveToDraft"] = True
 
     payload = {"query": query, "variables": variables}
 

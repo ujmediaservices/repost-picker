@@ -239,6 +239,10 @@ def main() -> None:
         help="Path to a directory containing example social media posts for style guidance",
     )
     parser.add_argument(
+        "--drafts", action="store_true",
+        help="Save posts as drafts in Buffer instead of scheduling",
+    )
+    parser.add_argument(
         "--debug", action="store_true",
         help="Dump Buffer GraphQL requests to stdout",
     )
@@ -246,6 +250,10 @@ def main() -> None:
 
     if parsed.debug:
         buffer_api.debug = True
+
+    if parsed.drafts:
+        buffer_api.save_drafts = True
+        print("Draft mode enabled: posts will be saved as drafts.\n", file=sys.stderr)
 
     # Load examples if provided
     examples_text = ""
