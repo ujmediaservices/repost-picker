@@ -1,13 +1,20 @@
 # repost-picker
 
-Selects the oldest blog posts from a JSON data file, generates social media text using Claude, and schedules them to multiple social media channels via the Buffer API.
+A suite of tools for generating AI-powered social media text and scheduling posts to multiple channels via the Buffer API.
 
-## How it works
+## Scripts
 
-The script runs in two phases:
+### repost_picker.py
 
-1. **Generate** -- Selects posts from the repost data file according to a config file, fetches each post's content and image from WordPress, and uses Claude to generate social media text. The results are saved to a temporary JSON file for manual review.
-2. **Schedule** -- After the user edits and confirms the review file, the script schedules each post to Bluesky, Mastodon, Threads, and X via the Buffer GraphQL API, then updates the data file with new dates.
+Selects the oldest blog posts from a JSON data file by type, generates social media text using Claude, and schedules them to multiple channels via Buffer.
+
+### generate-drip-posts.py
+
+Fetches the most recent posts from WordPress and generates three scheduled "drip" posts per article: two interesting facts (tomorrow and one week out) and an ICYMI summary (one month out).
+
+### find-bsky-by-url.py
+
+Searches sent Bluesky posts in Buffer for specific text.
 
 ## Requirements
 
@@ -24,10 +31,18 @@ The script runs in two phases:
 | `WORDPRESS_USERNAME` | WordPress username |
 | `WORDPRESS_PASSWORD` | WordPress application password |
 
-## Usage
+## repost_picker.py
+
+Runs in two phases:
+
+1. **Generate** -- Selects posts from the data file according to a config, fetches content and images from WordPress, and uses Claude to generate social media text. Results are saved to a temp JSON file for review.
+2. **Schedule** -- After the user edits and confirms, schedules each post to all channels via Buffer, then updates the data file with new dates.
+
+### Usage
 
 ```
 python repost_picker.py --config <config.json> --repost-file <data.json>
+python repost_picker.py --config <config.json> --repost-file <data.json> --examples ./examples
 python repost_picker.py --debug --config <config.json> --repost-file <data.json>
 ```
 
@@ -35,11 +50,12 @@ python repost_picker.py --debug --config <config.json> --repost-file <data.json>
 |---|---|---|
 | `--config` | Yes | Path to the config JSON file |
 | `--repost-file` | Yes | Path to the repost data JSON file |
+| `--examples` | No | Path to a directory of example social media posts for style guidance |
 | `--debug` | No | Dump all Buffer GraphQL queries and variables to stdout |
 
-## Config file
+### Config file
 
-The config file is a JSON file that defines a repost roadmap. See `sample-config.json` for an example.
+The config file defines a repost roadmap. See `sample-config.json` for an example.
 
 ```json
 {
@@ -72,11 +88,13 @@ The config file is a JSON file that defines a repost roadmap. See `sample-config
 | `reposts[].post_type` | Array of post type strings to match against the data file's `type` field. |
 | `reposts[].count` | Number of oldest posts to pick for the matching types. Defaults to 1 if omitted. |
 | `reposts[].mode` | Optional per-entry override for the scheduling mode. Falls back to `defaultMode` if omitted. |
-| `reposts[].due_at` | Required when mode is `customScheduled`. Date and time in `MM/DD/YYYY HH:MMAM/PM` format (e.g., `05/03/2026 09:00AM`). |
+| `reposts[].due_at` | Required when mode is `customScheduled`. Format: `MM/DD/YYYY HH:MMAM/PM` (e.g., `05/03/2026 09:00AM`). |
 
-## Data file
+If `count > 1` with `customScheduled` mode, the script warns that multiple posts will be scheduled at the same time and asks for confirmation.
 
-The script reads and writes a JSON data file (default: `uj-repost-content.json`). Each entry has the following fields:
+### Data file
+
+The data file is a JSON array of post entries. After scheduling, it is re-sorted by type (ascending) then date (descending), with blank lines separating each type section.
 
 ```json
 {
@@ -92,32 +110,51 @@ The script reads and writes a JSON data file (default: `uj-repost-content.json`)
 
 | Field | Description |
 |---|---|
-| `name` | Post title used in threaded posts on Threads and X. |
+| `name` | Post title, also used in threaded posts on Threads and X. |
 | `type` | Post type string matched against config `post_type` arrays. |
 | `url` | Public URL of the post. |
 | `last_posted_social` | Date the post was last shared (MM/DD/YYYY). Used for selecting the oldest posts and updated after scheduling. |
 | `last_posted_ig` | Date last posted to Instagram (not used by this script). |
 | `notes` | Free-text notes (not used by this script). |
-| `static_text` | Optional. If present and non-empty, this text is used as the social media post instead of generating text via Claude. |
+| `static_text` | Optional. If present and non-empty, used as the social media post instead of generating via Claude. |
 
-Posts are selected by finding the oldest `last_posted_social` dates within each configured post type group. After scheduling, dates are updated and the file is re-sorted by type (ascending) then date (descending), with blank lines separating each type section.
+## generate-drip-posts.py
 
-## Image selection
+Fetches the N most recent published posts from WordPress and generates three drip posts per article, each scheduled at a random AM time (7-11 AM ET):
 
-For each post, the script selects an image in the following order:
+| When | Type | Content |
+|---|---|---|
+| Tomorrow | Interesting fact | An interesting excerpt from the post |
+| +1 week | Interesting fact | A different interesting excerpt |
+| +1 month | ICYMI | "ICYMI:" summary of the article |
 
-1. **Featured image** -- fetched via the WordPress media API using the post's `featured_media` ID.
-2. **First content image** -- if no featured image exists, the first `<img>` found in the post/page HTML content is used.
+All drip posts use Buffer's `customScheduled` mode.
 
-This allows the script to work with both posts and pages, including those without a featured image set.
+### Usage
 
-## WordPress content lookup
+```
+python generate-drip-posts.py --num-posts 3
+python generate-drip-posts.py --num-posts 3 --examples ./examples
+python generate-drip-posts.py --num-posts 3 --debug
+```
 
-The script searches for content by slug in the WordPress REST API, checking posts first, then pages. This allows it to handle URLs that point to either content type.
+| Argument | Required | Description |
+|---|---|---|
+| `--num-posts` | Yes | Number of most recent WordPress posts to process |
+| `--examples` | No | Path to a directory of example social media posts for style guidance |
+| `--debug` | No | Dump all Buffer GraphQL queries and variables to stdout |
 
-## Review workflow
+## Style examples
 
-After generating social media text, the script saves a review file to the system temp directory and prints its path. The user can open and edit the `social_text` fields in any editor, then press Enter in the terminal to continue scheduling.
+Both `repost_picker.py` and `generate-drip-posts.py` support the `--examples` argument. Point it to a directory containing `.txt`, `.json`, or `.md` files with edited examples of your social media posts. These are included in the Claude prompt as style guidance when generating text.
+
+## find-bsky-by-url.py
+
+Searches sent Bluesky posts in Buffer for specific text (case-insensitive). Returns the Buffer post ID, Bluesky URL, send date, and post text. Includes exponential backoff for Buffer API rate limiting.
+
+```
+python find-bsky-by-url.py --text "search term"
+```
 
 ## Social media channels
 
@@ -128,24 +165,30 @@ Each post is scheduled to four Buffer channels:
 - **Threads** -- Threaded post. First post: social text with featured image. Second post: post title with link.
 - **X** -- Threaded post. First post: social text with featured image. Second post: post title with link.
 
-## Utility scripts
+## Image selection
 
-### find-bsky-by-url.py
+For each post, the best available image is selected in order:
 
-Search sent Bluesky posts in Buffer for specific text.
+1. **Featured image** -- fetched via the WordPress media API.
+2. **First content image** -- the first `<img>` found in the post/page HTML.
 
-```
-python find-bsky-by-url.py --text "search term"
-```
+This works with both posts and pages, including those without a featured image.
 
-Paginates through all sent Bluesky posts and prints matches (including Bluesky post URL). Includes exponential backoff for Buffer API rate limiting.
+## WordPress content lookup
+
+Content is looked up by slug in the WordPress REST API, checking posts first then pages.
+
+## Review workflow
+
+Both scripts save generated social media text to a temporary JSON file in the system temp directory and print its path. The user can edit `social_text` fields in any editor, then press Enter to continue scheduling.
 
 ## Project structure
 
 | File | Description |
 |---|---|
-| `repost_picker.py` | Main script |
-| `buffer_api.py` | Reusable Buffer GraphQL API client |
+| `repost_picker.py` | Repost scheduling script |
+| `generate-drip-posts.py` | Drip post generation and scheduling script |
+| `social_text.py` | Shared library: WordPress API, Claude text generation, examples loading, image resolution |
+| `buffer_api.py` | Shared library: Buffer GraphQL API client with retry/backoff |
 | `find-bsky-by-url.py` | Search sent Bluesky posts by text |
-| `uj-repost-content.json` | Post data file |
-| `sample-config.json` | Example config file |
+| `sample-config.json` | Example config file for repost_picker.py |
