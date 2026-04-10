@@ -43,6 +43,8 @@ Runs in two phases:
 ```
 python repost_picker.py --config <config.json> --repost-file <data.json>
 python repost_picker.py --config <config.json> --repost-file <data.json> --examples ./examples
+python repost_picker.py --config <config.json> --repost-file <data.json> --drafts
+python repost_picker.py --config <config.json> --repost-file <data.json> --tags "Promo,Weekly"
 python repost_picker.py --debug --config <config.json> --repost-file <data.json>
 ```
 
@@ -51,6 +53,8 @@ python repost_picker.py --debug --config <config.json> --repost-file <data.json>
 | `--config` | Yes | Path to the config JSON file |
 | `--repost-file` | Yes | Path to the repost data JSON file |
 | `--examples` | No | Path to a directory of example social media posts for style guidance |
+| `--drafts` | No | Save posts as drafts in Buffer instead of scheduling them |
+| `--tags` | No | Comma-delimited list of Buffer tag names to apply to all posts |
 | `--debug` | No | Dump all Buffer GraphQL queries and variables to stdout |
 
 ### Config file
@@ -135,6 +139,8 @@ All drip posts use Buffer's `customScheduled` mode.
 ```
 python generate-drip-posts.py --num-posts 3
 python generate-drip-posts.py --num-posts 3 --examples ./examples
+python generate-drip-posts.py --num-posts 3 --drafts
+python generate-drip-posts.py --num-posts 3 --tags "NewArticle,Drip"
 python generate-drip-posts.py --num-posts 3 --debug
 ```
 
@@ -142,6 +148,8 @@ python generate-drip-posts.py --num-posts 3 --debug
 |---|---|---|
 | `--num-posts` | Yes | Number of most recent WordPress posts to process |
 | `--examples` | No | Path to a directory of example social media posts for style guidance |
+| `--drafts` | No | Save posts as drafts in Buffer instead of putting them directly into the queue |
+| `--tags` | No | Comma-delimited list of Buffer tag names to apply to all posts |
 | `--debug` | No | Dump all Buffer GraphQL queries and variables to stdout |
 
 ## Style examples
@@ -155,6 +163,14 @@ Searches sent Bluesky posts in Buffer for specific text (case-insensitive). Retu
 ```
 python find-bsky-by-url.py --text "search term"
 ```
+
+## Tagging
+
+Both scripts support `--tags` for applying Buffer tags to all scheduled posts. Tags are resolved by name against your Buffer organization's existing tags at startup. If a tag name is not found, the script exits with an error listing the available tags.
+
+## Image error handling
+
+If Buffer returns a "Failed to fetch image dimensions" error for any platform, the script attempts to re-host the image on [Litterbox](https://litterbox.catbox.moe) (a temporary file host with 72-hour expiry) and retries the failed platforms with the new URL. If the Litterbox upload fails or the retried platforms still return the same error, the script falls back to prompting whether to retry without an image. Platforms that succeeded on the first attempt are not affected.
 
 ## Social media channels
 

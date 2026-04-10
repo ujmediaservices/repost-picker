@@ -14,10 +14,8 @@ import requests
 
 import buffer_api
 from buffer_api import (
-    schedule_to_buffer_bluesky,
-    schedule_to_buffer_mastodon,
-    schedule_to_buffer_threads,
-    schedule_to_buffer_x,
+    resolve_tag_names_to_ids,
+    schedule_to_all_platforms,
 )
 from social_text import (
     ICYMI_PROMPT_TEMPLATE,
@@ -176,7 +174,9 @@ def generate_drip_posts(
     return drip_posts
 
 
-def schedule_drip_posts(drip_posts: list[dict]) -> list[dict]:
+def schedule_drip_posts(
+    drip_posts: list[dict], tag_ids: list[str] | None = None,
+) -> list[dict]:
     """Schedule all drip posts to Buffer."""
     results = []
 
@@ -197,29 +197,12 @@ def schedule_drip_posts(drip_posts: list[dict]) -> list[dict]:
         label = f"{post_type} ({sched_date} {sched_time})"
         print(f"  Scheduling: {title} [{label}]...", file=sys.stderr)
 
-        # Bluesky
-        bluesky_result = schedule_to_buffer_bluesky(text, url, BUFFER_MODE, due_at)
-        print(f"    Bluesky: {bluesky_result}", file=sys.stderr)
-
-        # Mastodon
-        mastodon_result = schedule_to_buffer_mastodon(text, url, img_url, BUFFER_MODE, due_at)
-        print(f"    Mastodon: {mastodon_result}", file=sys.stderr)
-
-        # Threads
-        threads_result = schedule_to_buffer_threads(
-            text, title, url, img_url, BUFFER_MODE, due_at
+        platform_results = schedule_to_all_platforms(
+            text, title, url, img_url, BUFFER_MODE, due_at, tag_ids
         )
-        print(f"    Threads: {threads_result}", file=sys.stderr)
 
-        # X
-        x_result = schedule_to_buffer_x(
-            text, title, url, img_url, BUFFER_MODE, due_at
-        )
-        print(f"    X: {x_result}", file=sys.stderr)
-
-        buffer_result = (
-            f"Bluesky: {bluesky_result}, Mastodon: {mastodon_result}, "
-            f"Threads: {threads_result}, X: {x_result}"
+        buffer_result = ", ".join(
+            f"{k}: {v}" for k, v in platform_results.items()
         )
         results.append({**post, "buffer_result": buffer_result})
 
@@ -243,6 +226,10 @@ def main() -> None:
         help="Save posts as drafts in Buffer instead of scheduling",
     )
     parser.add_argument(
+        "--tags", default=None,
+        help="Comma-delimited list of Buffer tag names to apply to posts",
+    )
+    parser.add_argument(
         "--debug", action="store_true",
         help="Dump Buffer GraphQL requests to stdout",
     )
@@ -254,6 +241,17 @@ def main() -> None:
     if parsed.drafts:
         buffer_api.save_drafts = True
         print("Draft mode enabled: posts will be saved as drafts.\n", file=sys.stderr)
+
+    # Resolve tag names to IDs
+    tag_names = []
+    if parsed.tags:
+        tag_names.extend(t.strip() for t in parsed.tags.split(",") if t.strip())
+
+    tag_ids = None
+    if tag_names:
+        print(f"Resolving tags: {', '.join(tag_names)}...", file=sys.stderr)
+        tag_ids = resolve_tag_names_to_ids(tag_names)
+        print(f"  Resolved {len(tag_ids)} tag(s).\n", file=sys.stderr)
 
     # Load examples if provided
     examples_text = ""
@@ -291,7 +289,7 @@ def main() -> None:
 
     # Phase 2: Schedule to Buffer
     print("\nPhase 2: Scheduling drip posts to Buffer...", file=sys.stderr)
-    results = schedule_drip_posts(edited_posts)
+    results = schedule_drip_posts(edited_posts, tag_ids)
 
     print(f"\n{len(results)} drip post(s) scheduled:\n")
     for r in results:

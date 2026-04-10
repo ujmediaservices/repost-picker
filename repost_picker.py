@@ -8,10 +8,8 @@ from pathlib import Path
 
 import buffer_api
 from buffer_api import (
-    schedule_to_buffer_bluesky,
-    schedule_to_buffer_mastodon,
-    schedule_to_buffer_threads,
-    schedule_to_buffer_x,
+    resolve_tag_names_to_ids,
+    schedule_to_all_platforms,
 )
 from social_text import (
     INTERESTING_FACT_PROMPT_TEMPLATE,
@@ -183,7 +181,8 @@ def write_grouped_json(rows: list[dict], data_path: Path) -> None:
 def schedule_posts(
     posts_data: list[dict], rows: list,
     selected_indices: list[tuple[int, int, str, str | None]],
-    config: dict, data_path: Path
+    config: dict, data_path: Path,
+    tag_ids: list[str] | None = None,
 ) -> list[tuple[str, str, str, str]]:
     """Phase 2: Read edited posts and schedule to Buffer, update data file."""
     start_date = parse_date(config["startDate"])
@@ -204,32 +203,15 @@ def schedule_posts(
             continue
 
         mode_label = f" ({buffer_mode})" if buffer_mode == "customScheduled" else ""
+        print(f"  Scheduling to Buffer{mode_label}: {title}...", file=sys.stderr)
 
-        # Schedule to Bluesky channel
-        print(f"  Scheduling to Buffer (Bluesky){mode_label}: {title}...", file=sys.stderr)
-        bluesky_result = schedule_to_buffer_bluesky(best_text, url, buffer_mode, due_at)
-        print(f"  Bluesky: {bluesky_result}", file=sys.stderr)
-
-        # Schedule to Mastodon channel (with featured image)
-        print(f"  Scheduling to Buffer (Mastodon){mode_label}...", file=sys.stderr)
-        mastodon_result = schedule_to_buffer_mastodon(best_text, url, img_url, buffer_mode, due_at)
-        print(f"  Mastodon: {mastodon_result}", file=sys.stderr)
-
-        # Schedule to Threads channel (threaded post with image)
-        print(f"  Scheduling to Buffer (Threads){mode_label}...", file=sys.stderr)
-        threads_result = schedule_to_buffer_threads(
-            best_text, title, url, img_url, buffer_mode, due_at
+        platform_results = schedule_to_all_platforms(
+            best_text, title, url, img_url, buffer_mode, due_at, tag_ids
         )
-        print(f"  Threads: {threads_result}", file=sys.stderr)
 
-        # Schedule to X channel (threaded post with image)
-        print(f"  Scheduling to Buffer (X){mode_label}...", file=sys.stderr)
-        x_result = schedule_to_buffer_x(
-            best_text, title, url, img_url, buffer_mode, due_at
+        buffer_result = ", ".join(
+            f"{k}: {v}" for k, v in platform_results.items()
         )
-        print(f"  X: {x_result}", file=sys.stderr)
-
-        buffer_result = f"Bluesky: {bluesky_result}, Mastodon: {mastodon_result}, Threads: {threads_result}, X: {x_result}"
         results.append((title, url, best_text, buffer_result))
 
     # Sort by type ascending, then by date descending within each type
@@ -262,6 +244,7 @@ def main() -> None:
         help="Path to a directory containing example social media posts for style guidance",
     )
     parser.add_argument("--drafts", action="store_true", help="Save posts as drafts in Buffer instead of scheduling")
+    parser.add_argument("--tags", default=None, help="Comma-delimited list of Buffer tag names to apply to posts")
     parser.add_argument("--debug", action="store_true", help="Dump Buffer GraphQL requests to stdout")
     parsed = parser.parse_args()
 
@@ -272,6 +255,17 @@ def main() -> None:
     if parsed.drafts:
         buffer_api.save_drafts = True
         print("Draft mode enabled: posts will be saved as drafts.\n", file=sys.stderr)
+
+    # Resolve tag names to IDs
+    tag_names = []
+    if parsed.tags:
+        tag_names.extend(t.strip() for t in parsed.tags.split(",") if t.strip())
+
+    tag_ids = None
+    if tag_names:
+        print(f"Resolving tags: {', '.join(tag_names)}...", file=sys.stderr)
+        tag_ids = resolve_tag_names_to_ids(tag_names)
+        print(f"  Resolved {len(tag_ids)} tag(s).\n", file=sys.stderr)
 
     data_path = Path(parsed.repost_file)
     if not data_path.exists():
@@ -318,7 +312,7 @@ def main() -> None:
 
     # Phase 2: Schedule edited posts to Buffer
     print("\nPhase 2: Scheduling posts to Buffer...", file=sys.stderr)
-    results = schedule_posts(edited_posts, rows, selected_indices, config, data_path)
+    results = schedule_posts(edited_posts, rows, selected_indices, config, data_path, tag_ids)
 
     print(f"\n{len(results)} post(s) scheduled:\n")
     for title, url, social_text, buffer_id in results:

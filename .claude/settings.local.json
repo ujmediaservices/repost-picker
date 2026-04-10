@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__mcp-registry__search_mcp_registry",
+      "Bash(find 'G:/マイドライブ/Unseen Japan/Code/repost-picker' -type f -name *.md -o -name *.txt)",
+      "Read(//c/Users/allen/Downloads/**)",
+      "Bash(python -c \"import json; data = json.load\\(open\\(''G:/マイドライブ/Unseen Japan/Code/repost-picker-config/one-shot-examples/top_x_posts_by_likes.json''\\)\\); print\\(f''Valid JSON: {len\\(data\\)} posts''\\); print\\(f''Fields per post: {list\\(data[0].keys\\(\\)\\)}''\\); print\\(f''Likes range: {data[0][\"\"likes\"\"]} to {data[-1][\"\"likes\"\"]}''\\)\")",
+      "Bash(python repost_picker.py --help)",
+      "Bash(python generate-drip-posts.py --help)",
+      "WebFetch(domain:developers.buffer.com)",
+      "WebSearch",
+      "WebFetch(domain:informationmatters.org)",
+      "WebFetch(domain:www.weforum.org)",
+      "WebFetch(domain:popheist.com)",
+      "WebFetch(domain:web-japan.org)",
+      "WebFetch(domain:english-meiji.net)",
+      "WebFetch(domain:www.j-cast.com)",
+      "WebFetch(domain:engoo.com)",
+      "WebFetch(domain:www.nippon.com)",
+      "WebFetch(domain:datasocietydecisionmaking.wordpress.com)",
+      "WebFetch(domain:hon-hikidashi.jp)",
+      "mcp__buffer__get_account",
+      "mcp__buffer__list_channels",
+      "mcp__buffer__get_channel",
+      "Bash(python -c \"import buffer_api; print\\(''buffer_api OK''\\)\")",
+      "Bash(python -c \"import generate_drip_posts; print\\(''generate-drip-posts imports not testable as module''\\)\")",
+      "Bash(python -c \"import repost_picker; print\\(''repost_picker OK''\\)\")",
+      "Bash(python -c \"import py_compile; py_compile.compile\\(''generate-drip-posts.py'', doraise=True\\); print\\(''generate-drip-posts.py OK''\\)\")"
+    ]
+  }
+}
