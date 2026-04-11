@@ -41,21 +41,20 @@ Runs in two phases:
 ### Usage
 
 ```
+python repost_picker.py
 python repost_picker.py --config <config.json> --repost-file <data.json>
-python repost_picker.py --config <config.json> --repost-file <data.json> --examples ./examples
-python repost_picker.py --config <config.json> --repost-file <data.json> --drafts
-python repost_picker.py --config <config.json> --repost-file <data.json> --tags "Promo,Weekly"
-python repost_picker.py --debug --config <config.json> --repost-file <data.json>
+python repost_picker.py --examples ./examples
+python repost_picker.py --drafts
+python repost_picker.py --debug
 ```
 
-| Argument | Required | Description |
+| Argument | Default | Description |
 |---|---|---|
-| `--config` | Yes | Path to the config JSON file |
-| `--repost-file` | Yes | Path to the repost data JSON file |
-| `--examples` | No | Path to a directory of example social media posts for style guidance |
-| `--drafts` | No | Save posts as drafts in Buffer instead of scheduling them |
-| `--tags` | No | Comma-delimited list of Buffer tag names to apply to all posts |
-| `--debug` | No | Dump all Buffer GraphQL queries and variables to stdout |
+| `--config` | `G:\My Drive\...\repost-picker-config\config.json` | Path to the config JSON file |
+| `--repost-file` | `G:\My Drive\...\repost-picker-config\uj-repost-content.json` | Path to the repost data JSON file |
+| `--examples` | `G:\My Drive\...\repost-picker-config\one-shot-examples` | Path to a directory of example social media posts for style guidance |
+| `--drafts` | off | Save posts as drafts in Buffer instead of scheduling them |
+| `--debug` | off | Dump all Buffer GraphQL queries and variables to stdout |
 
 ### Config file
 
@@ -78,7 +77,8 @@ The config file defines a repost roadmap. See `sample-config.json` for an exampl
             "post_type": ["ToursPromo"],
             "count": 1,
             "mode": "customScheduled",
-            "due_at": "05/03/2026 09:00AM"
+            "due_at": "05/03/2026 09:00AM",
+            "tags": ["69509c1ddb3b3442dd004ddd"]
         }
     ]
 }
@@ -93,6 +93,7 @@ The config file defines a repost roadmap. See `sample-config.json` for an exampl
 | `reposts[].count` | Number of oldest posts to pick for the matching types. Defaults to 1 if omitted. |
 | `reposts[].mode` | Optional per-entry override for the scheduling mode. Falls back to `defaultMode` if omitted. |
 | `reposts[].due_at` | Required when mode is `customScheduled`. Format: `MM/DD/YYYY HH:MMAM/PM` (e.g., `05/03/2026 09:00AM`). |
+| `reposts[].tags` | Optional array of pre-created Buffer tag IDs to apply to all posts in this entry. |
 
 If `count > 1` with `customScheduled` mode, the script warns that multiple posts will be scheduled at the same time and asks for confirmation.
 
@@ -140,7 +141,7 @@ All drip posts use Buffer's `customScheduled` mode.
 python generate-drip-posts.py --num-posts 3
 python generate-drip-posts.py --num-posts 3 --examples ./examples
 python generate-drip-posts.py --num-posts 3 --drafts
-python generate-drip-posts.py --num-posts 3 --tags "NewArticle,Drip"
+python generate-drip-posts.py --num-posts 3 --tags "tagid1,tagid2"
 python generate-drip-posts.py --num-posts 3 --debug
 ```
 
@@ -149,7 +150,7 @@ python generate-drip-posts.py --num-posts 3 --debug
 | `--num-posts` | Yes | Number of most recent WordPress posts to process |
 | `--examples` | No | Path to a directory of example social media posts for style guidance |
 | `--drafts` | No | Save posts as drafts in Buffer instead of putting them directly into the queue |
-| `--tags` | No | Comma-delimited list of Buffer tag names to apply to all posts |
+| `--tags` | No | Comma-delimited list of pre-created Buffer tag IDs to apply to all posts |
 | `--debug` | No | Dump all Buffer GraphQL queries and variables to stdout |
 
 ## Style examples
@@ -166,7 +167,7 @@ python find-bsky-by-url.py --text "search term"
 
 ## Tagging
 
-Both scripts support `--tags` for applying Buffer tags to all scheduled posts. Tags are resolved by name against your Buffer organization's existing tags at startup. If a tag name is not found, the script exits with an error listing the available tags.
+`repost_picker.py` supports per-entry tags in the config file via the `tags` field (an array of Buffer tag IDs). `generate-drip-posts.py` supports the `--tags` CLI argument for applying tags to all drip posts. Tags must be pre-created in your Buffer organization; the scripts do not validate IDs before scheduling.
 
 ## Image error handling
 

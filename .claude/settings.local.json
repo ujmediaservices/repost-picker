@@ -25,7 +25,16 @@
       "Bash(python -c \"import buffer_api; print\\(''buffer_api OK''\\)\")",
       "Bash(python -c \"import generate_drip_posts; print\\(''generate-drip-posts imports not testable as module''\\)\")",
       "Bash(python -c \"import repost_picker; print\\(''repost_picker OK''\\)\")",
-      "Bash(python -c \"import py_compile; py_compile.compile\\(''generate-drip-posts.py'', doraise=True\\); print\\(''generate-drip-posts.py OK''\\)\")"
+      "Bash(python -c \"import py_compile; py_compile.compile\\(''generate-drip-posts.py'', doraise=True\\); print\\(''generate-drip-posts.py OK''\\)\")",
+      "mcp__buffer__introspect_schema",
+      "Bash(python -c ':*)",
+      "mcp__buffer__execute_query",
+      "mcp__buffer__list_posts",
+      "mcp__buffer__get_post",
+      "mcp__buffer__delete_post",
+      "Bash(python repost_picker.py:*)",
+      "Bash(python repost_select.py)",
+      "Bash(python repost_select.py --config \"G:\\\\My Drive\\\\Unseen Japan\\\\Code\\\\repost-picker-config\\\\config-fillin.json\")"
     ]
   }
 }

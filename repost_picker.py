@@ -7,10 +7,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import buffer_api
-from buffer_api import (
-    resolve_tag_names_to_ids,
-    schedule_to_all_platforms,
-)
+from buffer_api import schedule_to_all_platforms
 from social_text import (
     INTERESTING_FACT_PROMPT_TEMPLATE,
     fetch_post_content,
@@ -45,23 +42,24 @@ def parse_due_at(due_at_str: str) -> str:
 
 def select_posts_from_config(
     config: dict, rows: list
-) -> list[tuple[int, int, str, str | None]]:
+) -> list[tuple[int, int, str, str | None, list[str] | None]]:
     """Select posts according to the config roadmap.
 
     Each entry in config["reposts"] specifies post_type(s) and a count.
     Posts are selected in config array order, oldest first within each group.
 
-    Returns a list of (offset, row_index, mode, due_at_iso) tuples.
+    Returns a list of (offset, row_index, mode, due_at_iso, tag_ids) tuples.
     """
     default_mode = config.get("defaultMode", "addToQueue")
     already_selected: set[int] = set()
-    selected: list[tuple[int, int, str, str | None]] = []
+    selected: list[tuple[int, int, str, str | None, list[str] | None]] = []
     offset = 1
 
     for entry in config["reposts"]:
         post_types = [t.strip() for t in entry["post_type"]]
         count = entry.get("count", 1)
         entry_mode = entry.get("mode", default_mode)
+        entry_tags = entry.get("tags") or None
 
         # Parse due_at if mode is customScheduled
         due_at_iso = None
@@ -102,7 +100,7 @@ def select_posts_from_config(
         # Sort by date ascending (oldest first) and take requested count
         candidates.sort(key=lambda x: x[0])
         for _, idx in candidates[:count]:
-            selected.append((offset, idx, entry_mode, due_at_iso))
+            selected.append((offset, idx, entry_mode, due_at_iso, entry_tags))
             already_selected.add(idx)
             offset += 1
 
@@ -111,7 +109,7 @@ def select_posts_from_config(
 
 def generate_posts(
     config: dict, data_path: Path, examples_text: str = "",
-) -> tuple[list[dict], list, list[tuple[int, int, str, str | None]]]:
+) -> tuple[list[dict], list, list[tuple[int, int, str, str | None, list[str] | None]]]:
     """Phase 1: Select posts, fetch content, generate social text.
 
     Returns (posts_data, data_rows, selected_indices) where posts_data is a
@@ -127,7 +125,7 @@ def generate_posts(
 
     # Generate social text for each post
     posts_data: list[dict] = []
-    for offset, idx, _mode, _due_at in selected:
+    for offset, idx, _mode, _due_at, _tags in selected:
         title = rows[idx]["name"]
         url = rows[idx]["url"]
         slug = slug_from_url(url)
@@ -180,15 +178,14 @@ def write_grouped_json(rows: list[dict], data_path: Path) -> None:
 
 def schedule_posts(
     posts_data: list[dict], rows: list,
-    selected_indices: list[tuple[int, int, str, str | None]],
+    selected_indices: list[tuple[int, int, str, str | None, list[str] | None]],
     config: dict, data_path: Path,
-    tag_ids: list[str] | None = None,
 ) -> list[tuple[str, str, str, str]]:
     """Phase 2: Read edited posts and schedule to Buffer, update data file."""
     start_date = parse_date(config["startDate"])
     results: list[tuple[str, str, str, str]] = []
 
-    for post, (offset, idx, buffer_mode, due_at) in zip(posts_data, selected_indices):
+    for post, (offset, idx, buffer_mode, due_at, tag_ids) in zip(posts_data, selected_indices):
         title = post["title"]
         url = post["url"]
         img_url = post["featured_image"] or None
@@ -237,14 +234,16 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Select and schedule repost content to social media via Buffer."
     )
-    parser.add_argument("--config", required=True, help="Path to the config JSON file")
-    parser.add_argument("--repost-file", required=True, help="Path to the repost data JSON file")
+    default_config = r"G:\My Drive\Unseen Japan\Code\repost-picker-config\config.json"
+    default_repost = r"G:\My Drive\Unseen Japan\Code\repost-picker-config\uj-repost-content.json"
+    default_examples = r"G:\My Drive\Unseen Japan\Code\repost-picker-config\one-shot-examples"
+    parser.add_argument("--config", default=default_config, help="Path to the config JSON file")
+    parser.add_argument("--repost-file", default=default_repost, help="Path to the repost data JSON file")
     parser.add_argument(
-        "--examples", default=None,
+        "--examples", default=default_examples,
         help="Path to a directory containing example social media posts for style guidance",
     )
     parser.add_argument("--drafts", action="store_true", help="Save posts as drafts in Buffer instead of scheduling")
-    parser.add_argument("--tags", default=None, help="Comma-delimited list of Buffer tag names to apply to posts")
     parser.add_argument("--debug", action="store_true", help="Dump Buffer GraphQL requests to stdout")
     parsed = parser.parse_args()
 
@@ -255,17 +254,6 @@ def main() -> None:
     if parsed.drafts:
         buffer_api.save_drafts = True
         print("Draft mode enabled: posts will be saved as drafts.\n", file=sys.stderr)
-
-    # Resolve tag names to IDs
-    tag_names = []
-    if parsed.tags:
-        tag_names.extend(t.strip() for t in parsed.tags.split(",") if t.strip())
-
-    tag_ids = None
-    if tag_names:
-        print(f"Resolving tags: {', '.join(tag_names)}...", file=sys.stderr)
-        tag_ids = resolve_tag_names_to_ids(tag_names)
-        print(f"  Resolved {len(tag_ids)} tag(s).\n", file=sys.stderr)
 
     data_path = Path(parsed.repost_file)
     if not data_path.exists():
@@ -312,7 +300,7 @@ def main() -> None:
 
     # Phase 2: Schedule edited posts to Buffer
     print("\nPhase 2: Scheduling posts to Buffer...", file=sys.stderr)
-    results = schedule_posts(edited_posts, rows, selected_indices, config, data_path, tag_ids)
+    results = schedule_posts(edited_posts, rows, selected_indices, config, data_path)
 
     print(f"\n{len(results)} post(s) scheduled:\n")
     for title, url, social_text, buffer_id in results:

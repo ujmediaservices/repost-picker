@@ -13,10 +13,7 @@ from html import unescape
 import requests
 
 import buffer_api
-from buffer_api import (
-    resolve_tag_names_to_ids,
-    schedule_to_all_platforms,
-)
+from buffer_api import schedule_to_all_platforms
 from social_text import (
     ICYMI_PROMPT_TEMPLATE,
     INTERESTING_FACT_PROMPT_TEMPLATE,
@@ -227,7 +224,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--tags", default=None,
-        help="Comma-delimited list of Buffer tag names to apply to posts",
+        help="Comma-delimited list of pre-created Buffer tag IDs to apply to posts",
     )
     parser.add_argument(
         "--debug", action="store_true",
@@ -242,16 +239,10 @@ def main() -> None:
         buffer_api.save_drafts = True
         print("Draft mode enabled: posts will be saved as drafts.\n", file=sys.stderr)
 
-    # Resolve tag names to IDs
-    tag_names = []
-    if parsed.tags:
-        tag_names.extend(t.strip() for t in parsed.tags.split(",") if t.strip())
-
     tag_ids = None
-    if tag_names:
-        print(f"Resolving tags: {', '.join(tag_names)}...", file=sys.stderr)
-        tag_ids = resolve_tag_names_to_ids(tag_names)
-        print(f"  Resolved {len(tag_ids)} tag(s).\n", file=sys.stderr)
+    if parsed.tags:
+        tag_ids = [t.strip() for t in parsed.tags.split(",") if t.strip()]
+        print(f"Using {len(tag_ids)} tag ID(s): {', '.join(tag_ids)}\n", file=sys.stderr)
 
     # Load examples if provided
     examples_text = ""
