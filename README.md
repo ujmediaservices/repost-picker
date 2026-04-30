@@ -2,11 +2,44 @@
 
 A suite of tools for generating AI-powered social media text and scheduling posts to multiple channels via the Buffer API.
 
+## Claude Code skill: `/repost`
+
+The primary way to use repost-picker is the `/repost` Claude Code skill, which orchestrates a hybrid workflow:
+
+1. **Python Phase 1** (`repost_select.py`) -- Selects posts from the config roadmap, fetches WordPress content and images, outputs a review JSON.
+2. **Claude Phase** -- Claude generates social media text directly for each post (no Anthropic API key needed), then presents all posts for user review.
+3. **Python Phase 2** (`repost_schedule.py`) -- Schedules approved posts to Buffer, updates dates in the data file, re-sorts and writes it back.
+
+### Usage
+
+```
+/repost
+/repost --config custom-config.json
+/repost --drafts
+```
+
+All arguments are optional and have defaults:
+
+| Argument | Default | Description |
+|---|---|---|
+| `--config` | `G:\My Drive\...\repost-picker-config\config.json` | Path to the config JSON file |
+| `--repost-file` | `G:\My Drive\...\repost-picker-config\uj-repost-content.json` | Path to the repost data JSON file |
+| `--examples` | `G:\My Drive\...\repost-picker-config\one-shot-examples` | Path to a directory of example social media posts for style guidance |
+| `--drafts` | off | Save posts as Buffer drafts instead of scheduling |
+
 ## Scripts
+
+### repost_select.py
+
+Phase 1 of the `/repost` skill. Selects the oldest posts by type from the data file according to a config roadmap, fetches content and images from WordPress, and outputs a review JSON file for Claude to generate social text.
+
+### repost_schedule.py
+
+Phase 2 of the `/repost` skill. Reads the review JSON (with social text filled in), schedules each post to all four Buffer channels, updates dates in the data file, and re-sorts it.
 
 ### repost_picker.py
 
-Selects the oldest blog posts from a JSON data file by type, generates social media text using Claude, and schedules them to multiple channels via Buffer.
+Standalone script that runs the full repost workflow (selection, text generation via Anthropic API, scheduling) without the Claude Code skill. Requires `ANTHROPIC_API_KEY`.
 
 ### generate-drip-posts.py
 
@@ -23,13 +56,13 @@ Searches sent Bluesky posts in Buffer for specific text.
 
 ## Environment variables
 
-| Variable | Description |
-|---|---|
-| `ANTHROPIC_API_KEY` | API key for Claude |
-| `BUFFER_API_KEY` | API key for Buffer |
-| `WORDPRESS_URL` | WordPress site URL (e.g., `https://unseen-japan.com`) |
-| `WORDPRESS_USERNAME` | WordPress username |
-| `WORDPRESS_PASSWORD` | WordPress application password |
+| Variable | Required by | Description |
+|---|---|---|
+| `BUFFER_API_KEY` | All scripts | API key for Buffer |
+| `WORDPRESS_URL` | All scripts | WordPress site URL (e.g., `https://unseen-japan.com`) |
+| `WORDPRESS_USERNAME` | All scripts | WordPress username |
+| `WORDPRESS_PASSWORD` | All scripts | WordPress application password |
+| `ANTHROPIC_API_KEY` | `repost_picker.py`, `generate-drip-posts.py` only | API key for Claude (not needed by `/repost` skill) |
 
 ## repost_picker.py
 
@@ -155,7 +188,7 @@ python generate-drip-posts.py --num-posts 3 --debug
 
 ## Style examples
 
-Both `repost_picker.py` and `generate-drip-posts.py` support the `--examples` argument. Point it to a directory containing `.txt`, `.json`, or `.md` files with edited examples of your social media posts. These are included in the Claude prompt as style guidance when generating text.
+The `/repost` skill, `repost_picker.py`, and `generate-drip-posts.py` all support the `--examples` argument. Point it to a directory containing `.txt`, `.json`, or `.md` files with edited examples of your social media posts. These are included as style guidance when generating text. The `/repost` skill uses them as context for Claude's inline text generation; the standalone scripts include them in the Anthropic API prompt.
 
 ## find-bsky-by-url.py
 
@@ -171,7 +204,7 @@ python find-bsky-by-url.py --text "search term"
 
 ## Image error handling
 
-If Buffer returns a "Failed to fetch image dimensions" error for any platform, the script attempts to re-host the image on [Litterbox](https://litterbox.catbox.moe) (a temporary file host with 72-hour expiry) and retries the failed platforms with the new URL. If the Litterbox upload fails or the retried platforms still return the same error, the script falls back to prompting whether to retry without an image. Platforms that succeeded on the first attempt are not affected.
+If Buffer returns a "Failed to fetch image dimensions" error for any platform, the script aborts immediately and rolls back: every Buffer post created earlier in the run (and any platforms that already succeeded for the failing post) is deleted, and the data file is not updated. Re-run the script after resolving the upstream image issue.
 
 ## Social media channels
 
@@ -197,15 +230,18 @@ Content is looked up by slug in the WordPress REST API, checking posts first the
 
 ## Review workflow
 
-Both scripts save generated social media text to a temporary JSON file in the system temp directory and print its path. The user can edit `social_text` fields in any editor, then press Enter to continue scheduling.
+The `/repost` skill presents generated social text inline for review and lets the user request edits before scheduling. The standalone scripts (`repost_picker.py`, `generate-drip-posts.py`) save generated text to a temporary JSON file in the system temp directory; the user can edit `social_text` fields in any editor, then press Enter to continue scheduling.
 
 ## Project structure
 
 | File | Description |
 |---|---|
-| `repost_picker.py` | Repost scheduling script |
+| `repost_select.py` | Phase 1: post selection and WordPress content fetching (used by `/repost` skill) |
+| `repost_schedule.py` | Phase 2: Buffer scheduling and data file update (used by `/repost` skill) |
+| `repost_picker.py` | Standalone repost script (requires `ANTHROPIC_API_KEY`) |
 | `generate-drip-posts.py` | Drip post generation and scheduling script |
 | `social_text.py` | Shared library: WordPress API, Claude text generation, examples loading, image resolution |
 | `buffer_api.py` | Shared library: Buffer GraphQL API client with retry/backoff |
 | `find-bsky-by-url.py` | Search sent Bluesky posts by text |
 | `sample-config.json` | Example config file for repost_picker.py |
+| `.claude/skills/repost-picker/SKILL.md` | Claude Code skill definition for `/repost` |

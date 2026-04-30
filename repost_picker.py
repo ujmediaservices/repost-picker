@@ -184,32 +184,50 @@ def schedule_posts(
     """Phase 2: Read edited posts and schedule to Buffer, update data file."""
     start_date = parse_date(config["startDate"])
     results: list[tuple[str, str, str, str]] = []
+    created_post_ids: list[str] = []
 
-    for post, (offset, idx, buffer_mode, due_at, tag_ids) in zip(posts_data, selected_indices):
-        title = post["title"]
-        url = post["url"]
-        img_url = post["featured_image"] or None
-        best_text = post["social_text"]
+    try:
+        for post, (offset, idx, buffer_mode, due_at, tag_ids) in zip(posts_data, selected_indices):
+            title = post["title"]
+            url = post["url"]
+            img_url = (post.get("alt_image") or post.get("featured_image") or None)
+            best_text = post["social_text"]
 
-        # Update date in data
-        new_date = start_date + timedelta(days=offset)
-        rows[idx]["last_posted_social"] = new_date.strftime("%m/%d/%Y")
+            # Update date in data
+            new_date = start_date + timedelta(days=offset)
+            rows[idx]["last_posted_social"] = new_date.strftime("%m/%d/%Y")
 
-        if not best_text:
-            results.append((title, url, "", "SKIPPED"))
-            continue
+            if not best_text:
+                results.append((title, url, "", "SKIPPED"))
+                continue
 
-        mode_label = f" ({buffer_mode})" if buffer_mode == "customScheduled" else ""
-        print(f"  Scheduling to Buffer{mode_label}: {title}...", file=sys.stderr)
+            mode_label = f" ({buffer_mode})" if buffer_mode == "customScheduled" else ""
+            print(f"  Scheduling to Buffer{mode_label}: {title}...", file=sys.stderr)
 
-        platform_results = schedule_to_all_platforms(
-            best_text, title, url, img_url, buffer_mode, due_at, tag_ids
+            platform_results = schedule_to_all_platforms(
+                best_text, title, url, img_url, buffer_mode, due_at, tag_ids
+            )
+
+            for v in platform_results.values():
+                if v and not str(v).startswith("ERROR"):
+                    created_post_ids.append(v)
+
+            buffer_result = ", ".join(
+                f"{k}: {v}" for k, v in platform_results.items()
+            )
+            results.append((title, url, best_text, buffer_result))
+    except buffer_api.ImageUploadError as exc:
+        created_post_ids.extend(exc.successful_post_ids)
+        print(f"\nImage upload failed: {exc}", file=sys.stderr)
+        print(
+            f"Rolling back: deleting {len(created_post_ids)} post(s) created in this run...",
+            file=sys.stderr,
         )
-
-        buffer_result = ", ".join(
-            f"{k}: {v}" for k, v in platform_results.items()
-        )
-        results.append((title, url, best_text, buffer_result))
+        for pid in created_post_ids:
+            ok = buffer_api.delete_buffer_post(pid)
+            print(f"  delete {pid}: {'ok' if ok else 'FAILED'}", file=sys.stderr)
+        print("Data file not updated.", file=sys.stderr)
+        sys.exit(1)
 
     # Sort by type ascending, then by date descending within each type
     def _sort_key(r: dict) -> tuple[str, str]:

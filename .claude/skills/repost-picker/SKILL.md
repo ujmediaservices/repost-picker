@@ -11,6 +11,16 @@ Pick the oldest posts by type from the social-media repost JSON file according t
 
 This is a **hybrid skill**: Python scripts handle post selection, WordPress fetching, Buffer scheduling, and data file updates. Claude generates the social media text directly (no Anthropic API key needed).
 
+## Working directory
+
+This skill assumes the working directory is `G:\My Drive\Unseen Japan\Code\repost-picker`. If invoked from elsewhere, run first:
+
+```bash
+cd "G:\My Drive\Unseen Japan\Code\repost-picker"
+```
+
+All relative paths and scripts referenced below resolve from that directory.
+
 ## Inputs
 
 All arguments have defaults and are optional:
@@ -39,9 +49,11 @@ python repost_select.py [--config <path>] [--repost-file <path>] [--examples <pa
 Pass through any `--config`, `--repost-file`, or `--examples` arguments the user provided. The script outputs a review JSON file path to stdout.
 
 The review JSON contains:
-- `posts[]`: array of selected posts, each with `title`, `url`, `featured_image`, `content` (article text), `social_text` (pre-filled if static), `is_static`, `offset`, `row_index`, `mode`, `due_at`, `tags`
+- `posts[]`: array of selected posts, each with `title`, `url`, `featured_image`, `alt_image`, `alt_image_candidates`, `content` (article text), `social_text` (pre-filled if static), `is_static`, `offset`, `row_index`, `mode`, `due_at`, `tags`
 - `examples_text`: loaded style examples
 - `config_path` / `data_path`: file paths for Phase 2
+
+**Image selection**: `alt_image` is the image used on Mastodon, X, and Threads. By default it's the **first non-featured image found in the post body** (mirrors the drip-post behavior in `uj-prep-pub` — keeps reposts visually distinct from the article's featured image, which already appears everywhere else). `alt_image_candidates` is the full ordered list, with the featured image filtered out, duplicates removed, and WordPress resize suffixes (e.g., `-1024x768`) stripped. If the post has no alternative images, `alt_image` falls back to `featured_image`.
 
 ### Phase 2: Generate Social Media Text (Claude)
 
@@ -66,15 +78,15 @@ Read the review JSON. For each post where `is_static` is false (i.e., `social_te
 Present ALL posts to the user in a numbered list showing:
 - Post title
 - Post URL
-- Featured image URL (if any)
+- **Chosen image** (`alt_image`) that will be used on Mastodon/X/Threads, plus the count of additional candidates available (e.g., "image 1 of 3")
 - Social media text (generated or static)
 - Character count: `len(social_text) + 2 + len(url)` / 300
 - Scheduling mode (and due_at if customScheduled)
 - Tags (if any)
 
-**Ask the user to review and approve.** Let them request edits to any post's text. Do NOT proceed to Phase 4 until the user explicitly confirms.
+**Ask the user to review and approve.** Let them request edits to any post's text **or swap the image** to a different candidate (refer to `alt_image_candidates`; the user may say "use image 2 for post 5" or paste a specific URL). Do NOT proceed to Phase 4 until the user explicitly confirms.
 
-After approval, write the updated posts back to the review JSON file (update only the `social_text` fields in `posts[]`).
+After approval, write the updated posts back to the review JSON file (update `social_text` and, when changed, `alt_image` in `posts[]`).
 
 ### Phase 4: Schedule to Buffer and Update Data (Python)
 

@@ -18,6 +18,7 @@ from repost_picker import (
     select_posts_from_config,
 )
 from social_text import (
+    extract_alt_images,
     fetch_post_content,
     get_wp_config,
     load_examples,
@@ -57,10 +58,20 @@ def select_and_fetch(
         content, featured_media_id, raw_html = fetch_post_content(slug, wp_url, wp_auth)
 
         img_url = None
+        alt_images: list[str] = []
         static_text = rows[idx].get("static_text", "").strip()
 
         if content:
             img_url = resolve_post_image(featured_media_id, raw_html, wp_url, wp_auth)
+            alt_images = extract_alt_images(raw_html, img_url)
+            if alt_images:
+                print(
+                    f"  Alt image candidates: {len(alt_images)} "
+                    f"(default: {alt_images[0]})",
+                    file=sys.stderr,
+                )
+
+        chosen_alt = alt_images[0] if alt_images else (img_url or "")
 
         # Truncate content to ~4000 chars for the review file (keeps it manageable)
         content_excerpt = content[:4000] if content else ""
@@ -69,6 +80,8 @@ def select_and_fetch(
             "title": title,
             "url": url,
             "featured_image": img_url or "",
+            "alt_image": chosen_alt,
+            "alt_image_candidates": alt_images,
             "content": content_excerpt,
             "social_text": static_text if static_text else "",
             "is_static": bool(static_text),

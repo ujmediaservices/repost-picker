@@ -31,41 +31,59 @@ def schedule_from_review(review_path: str, drafts: bool = False) -> None:
     start_date = parse_date(config["startDate"])
     posts = review_data["posts"]
     results = []
+    created_post_ids: list[str] = []
 
-    for post in posts:
-        title = post["title"]
-        url = post["url"]
-        img_url = post["featured_image"] or None
-        best_text = post.get("social_text", "").strip()
-        offset = post["offset"]
-        idx = post["row_index"]
-        buffer_mode = post["mode"]
-        due_at = post.get("due_at")
-        tag_ids = post.get("tags")
+    try:
+        for post in posts:
+            title = post["title"]
+            url = post["url"]
+            img_url = (post.get("alt_image") or post.get("featured_image") or None)
+            best_text = post.get("social_text", "").strip()
+            offset = post["offset"]
+            idx = post["row_index"]
+            buffer_mode = post["mode"]
+            due_at = post.get("due_at")
+            tag_ids = post.get("tags")
 
-        # Update date in data
-        new_date = start_date + timedelta(days=offset)
-        rows[idx]["last_posted_social"] = new_date.strftime("%m/%d/%Y")
+            # Update date in data
+            new_date = start_date + timedelta(days=offset)
+            rows[idx]["last_posted_social"] = new_date.strftime("%m/%d/%Y")
 
-        # Clear static_text after scheduling
-        if post.get("is_static") and rows[idx].get("static_text"):
-            rows[idx]["static_text"] = ""
+            # Clear static_text after scheduling
+            if post.get("is_static") and rows[idx].get("static_text"):
+                rows[idx]["static_text"] = ""
 
-        if not best_text:
-            print(f"  SKIPPED (no text): {title}", file=sys.stderr)
-            results.append(f"SKIPPED: {title}")
-            continue
+            if not best_text:
+                print(f"  SKIPPED (no text): {title}", file=sys.stderr)
+                results.append(f"SKIPPED: {title}")
+                continue
 
-        mode_label = f" ({buffer_mode})" if buffer_mode == "customScheduled" else ""
-        print(f"  Scheduling to Buffer{mode_label}: {title}...", file=sys.stderr)
+            mode_label = f" ({buffer_mode})" if buffer_mode == "customScheduled" else ""
+            print(f"  Scheduling to Buffer{mode_label}: {title}...", file=sys.stderr)
 
-        platform_results = schedule_to_all_platforms(
-            best_text, title, url, img_url, buffer_mode, due_at, tag_ids
+            platform_results = schedule_to_all_platforms(
+                best_text, title, url, img_url, buffer_mode, due_at, tag_ids
+            )
+
+            for v in platform_results.values():
+                if v and not str(v).startswith("ERROR"):
+                    created_post_ids.append(v)
+
+            buffer_result = ", ".join(f"{k}: {v}" for k, v in platform_results.items())
+            results.append(f"{title}: {buffer_result}")
+            print(f"    {buffer_result}", file=sys.stderr)
+    except buffer_api.ImageUploadError as exc:
+        created_post_ids.extend(exc.successful_post_ids)
+        print(f"\nImage upload failed: {exc}", file=sys.stderr)
+        print(
+            f"Rolling back: deleting {len(created_post_ids)} post(s) created in this run...",
+            file=sys.stderr,
         )
-
-        buffer_result = ", ".join(f"{k}: {v}" for k, v in platform_results.items())
-        results.append(f"{title}: {buffer_result}")
-        print(f"    {buffer_result}", file=sys.stderr)
+        for pid in created_post_ids:
+            ok = buffer_api.delete_buffer_post(pid)
+            print(f"  delete {pid}: {'ok' if ok else 'FAILED'}", file=sys.stderr)
+        print("Data file not updated.", file=sys.stderr)
+        sys.exit(1)
 
     # Re-sort by type ascending, then by date descending within each type
     def _sort_key(r: dict) -> tuple[str, str]:

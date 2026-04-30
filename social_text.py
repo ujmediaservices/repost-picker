@@ -90,6 +90,40 @@ def extract_first_image_url(html: str) -> str | None:
     return match.group(1) if match else None
 
 
+def _strip_wp_resize(url: str) -> str:
+    """Strip WordPress resize suffixes like -1024x768 from an image URL.
+
+    Prefers the full-size URL so two srcs that point at the same canonical
+    image (one resized, one not) compare equal.
+    """
+    return re.sub(r"-\d+x\d+(?=\.[a-zA-Z0-9]+(?:$|\?))", "", url)
+
+
+def extract_alt_images(html: str, featured_url: str | None = None) -> list[str]:
+    """Extract alternative image URLs from post HTML.
+
+    Returns image URLs in document order with WordPress resize suffixes
+    stripped, the featured image filtered out, and duplicates removed.
+    """
+    if not html:
+        return []
+
+    srcs = re.findall(r'<img[^>]+src=["\']([^"\']+)["\']', html)
+    featured_norm = _strip_wp_resize(featured_url) if featured_url else None
+
+    seen: set[str] = set()
+    result: list[str] = []
+    for src in srcs:
+        normalized = _strip_wp_resize(src)
+        if normalized == featured_norm:
+            continue
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(normalized)
+    return result
+
+
 def get_wp_config() -> tuple[str, str, str]:
     """Read WordPress URL, username, and password from environment variables.
 

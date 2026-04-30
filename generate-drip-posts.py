@@ -176,32 +176,49 @@ def schedule_drip_posts(
 ) -> list[dict]:
     """Schedule all drip posts to Buffer."""
     results = []
+    created_post_ids: list[str] = []
 
-    for post in drip_posts:
-        title = post["title"]
-        url = post["url"]
-        img_url = post["featured_image"] or None
-        text = post["social_text"]
-        due_at = post["due_at_iso"]
-        post_type = post["post_type"]
-        sched_date = post["scheduled_date"]
-        sched_time = post["scheduled_time"]
+    try:
+        for post in drip_posts:
+            title = post["title"]
+            url = post["url"]
+            img_url = post["featured_image"] or None
+            text = post["social_text"]
+            due_at = post["due_at_iso"]
+            post_type = post["post_type"]
+            sched_date = post["scheduled_date"]
+            sched_time = post["scheduled_time"]
 
-        if not text:
-            results.append({**post, "buffer_result": "SKIPPED"})
-            continue
+            if not text:
+                results.append({**post, "buffer_result": "SKIPPED"})
+                continue
 
-        label = f"{post_type} ({sched_date} {sched_time})"
-        print(f"  Scheduling: {title} [{label}]...", file=sys.stderr)
+            label = f"{post_type} ({sched_date} {sched_time})"
+            print(f"  Scheduling: {title} [{label}]...", file=sys.stderr)
 
-        platform_results = schedule_to_all_platforms(
-            text, title, url, img_url, BUFFER_MODE, due_at, tag_ids
+            platform_results = schedule_to_all_platforms(
+                text, title, url, img_url, BUFFER_MODE, due_at, tag_ids
+            )
+
+            for v in platform_results.values():
+                if v and not str(v).startswith("ERROR"):
+                    created_post_ids.append(v)
+
+            buffer_result = ", ".join(
+                f"{k}: {v}" for k, v in platform_results.items()
+            )
+            results.append({**post, "buffer_result": buffer_result})
+    except buffer_api.ImageUploadError as exc:
+        created_post_ids.extend(exc.successful_post_ids)
+        print(f"\nImage upload failed: {exc}", file=sys.stderr)
+        print(
+            f"Rolling back: deleting {len(created_post_ids)} post(s) created in this run...",
+            file=sys.stderr,
         )
-
-        buffer_result = ", ".join(
-            f"{k}: {v}" for k, v in platform_results.items()
-        )
-        results.append({**post, "buffer_result": buffer_result})
+        for pid in created_post_ids:
+            ok = buffer_api.delete_buffer_post(pid)
+            print(f"  delete {pid}: {'ok' if ok else 'FAILED'}", file=sys.stderr)
+        sys.exit(1)
 
     return results
 
