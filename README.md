@@ -22,9 +22,9 @@ All arguments are optional and have defaults:
 
 | Argument | Default | Description |
 |---|---|---|
-| `--config` | `G:\My Drive\...\repost-picker-config\config.json` | Path to the config JSON file |
-| `--repost-file` | `G:\My Drive\...\repost-picker-config\uj-repost-content.json` | Path to the repost data JSON file |
-| `--examples` | `G:\My Drive\...\repost-picker-config\one-shot-examples` | Path to a directory of example social media posts for style guidance |
+| `--config` | `D:\uj\repost-picker-config\config.json` | Path to the config JSON file |
+| `--repost-file` | `D:\uj\repost-picker-config\uj-repost-content.json` | Path to the repost data JSON file |
+| `--examples` | `D:\uj\repost-picker-config\one-shot-examples` | Path to a directory of example social media posts for style guidance |
 | `--drafts` | off | Save posts as Buffer drafts instead of scheduling |
 
 ## Scripts
@@ -83,9 +83,9 @@ python repost_picker.py --debug
 
 | Argument | Default | Description |
 |---|---|---|
-| `--config` | `G:\My Drive\...\repost-picker-config\config.json` | Path to the config JSON file |
-| `--repost-file` | `G:\My Drive\...\repost-picker-config\uj-repost-content.json` | Path to the repost data JSON file |
-| `--examples` | `G:\My Drive\...\repost-picker-config\one-shot-examples` | Path to a directory of example social media posts for style guidance |
+| `--config` | `D:\uj\repost-picker-config\config.json` | Path to the config JSON file |
+| `--repost-file` | `D:\uj\repost-picker-config\uj-repost-content.json` | Path to the repost data JSON file |
+| `--examples` | `D:\uj\repost-picker-config\one-shot-examples` | Path to a directory of example social media posts for style guidance |
 | `--drafts` | off | Save posts as drafts in Buffer instead of scheduling them |
 | `--debug` | off | Dump all Buffer GraphQL queries and variables to stdout |
 

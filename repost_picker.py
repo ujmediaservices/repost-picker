@@ -252,9 +252,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Select and schedule repost content to social media via Buffer."
     )
-    default_config = r"G:\My Drive\Unseen Japan\Code\repost-picker-config\config.json"
-    default_repost = r"G:\My Drive\Unseen Japan\Code\repost-picker-config\uj-repost-content.json"
-    default_examples = r"G:\My Drive\Unseen Japan\Code\repost-picker-config\one-shot-examples"
+    default_config = r"D:\uj\repost-picker-config\config.json"
+    default_repost = r"D:\uj\repost-picker-config\uj-repost-content.json"
+    default_examples = r"D:\uj\repost-picker-config\one-shot-examples"
     parser.add_argument("--config", default=default_config, help="Path to the config JSON file")
     parser.add_argument("--repost-file", default=default_repost, help="Path to the repost data JSON file")
     parser.add_argument(

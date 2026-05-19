@@ -13,10 +13,10 @@ This is a **hybrid skill**: Python scripts handle post selection, WordPress fetc
 
 ## Working directory
 
-This skill assumes the working directory is `G:\My Drive\Unseen Japan\Code\repost-picker`. If invoked from elsewhere, run first:
+This skill assumes the working directory is `D:\uj\repost-picker`. If invoked from elsewhere, run first:
 
 ```bash
-cd "G:\My Drive\Unseen Japan\Code\repost-picker"
+cd "D:\uj\repost-picker"
 ```
 
 All relative paths and scripts referenced below resolve from that directory.
@@ -27,9 +27,9 @@ All arguments have defaults and are optional:
 
 | Argument | Default | Description |
 |---|---|---|
-| `--config` | `G:\My Drive\Unseen Japan\Code\repost-picker-config\config.json` | Path to the config JSON file |
-| `--repost-file` | `G:\My Drive\Unseen Japan\Code\repost-picker-config\uj-repost-content.json` | Path to the repost data JSON file |
-| `--examples` | `G:\My Drive\Unseen Japan\Code\repost-picker-config\one-shot-examples` | Path to a directory of example social media posts for style guidance |
+| `--config` | `D:\uj\repost-picker-config\config.json` | Path to the config JSON file |
+| `--repost-file` | `D:\uj\repost-picker-config\uj-repost-content.json` | Path to the repost data JSON file |
+| `--examples` | `D:\uj\repost-picker-config\one-shot-examples` | Path to a directory of example social media posts for style guidance |
 | `--drafts` | off | Save posts as Buffer drafts instead of scheduling |
 
 Example: `/repost` (uses all defaults)
@@ -42,7 +42,7 @@ Example with drafts: `/repost --drafts`
 Run the selection script from the project directory:
 
 ```
-cd "G:\My Drive\Unseen Japan\Code\repost-picker"
+cd "D:\uj\repost-picker"
 python repost_select.py [--config <path>] [--repost-file <path>] [--examples <path>]
 ```
 
@@ -107,7 +107,7 @@ After approval, write the updated posts back to the review JSON file (update `so
 Run the scheduling script:
 
 ```
-cd "G:\My Drive\Unseen Japan\Code\repost-picker"
+cd "D:\uj\repost-picker"
 python repost_schedule.py --review-file <review_json_path> [--drafts] [--debug]
 ```
 
