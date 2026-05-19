@@ -205,9 +205,9 @@ def schedule_to_buffer_bluesky(
             "channelId": BUFFER_BLUESKY_CHANNEL_ID,
             "schedulingType": "automatic",
             "mode": mode,
-            "assets": {
-                "link": link_asset,
-            },
+            "assets": [
+                {"link": link_asset},
+            ],
         }
     }
     if due_at:
@@ -245,7 +245,7 @@ def schedule_to_buffer_facebook(
         }
     }
     if image_url:
-        variables["input"]["assets"] = {"images": [{"url": image_url}]}
+        variables["input"]["assets"] = [{"image": {"url": image_url}}]
     if due_at:
         variables["input"]["dueAt"] = due_at
     if tag_ids:
@@ -274,7 +274,7 @@ def schedule_to_buffer_mastodon(
     if due_at:
         variables["input"]["dueAt"] = due_at
     if image_url:
-        variables["input"]["assets"] = {"images": [{"url": image_url}]}
+        variables["input"]["assets"] = [{"image": {"url": image_url}}]
     if tag_ids:
         variables["input"]["tagIds"] = tag_ids
     return _buffer_create_post(variables)
@@ -296,14 +296,14 @@ def schedule_to_buffer_threads(
     # Thread post 1: social media text + featured image
     thread_post_1 = {"text": text}
     if image_url:
-        thread_post_1["assets"] = {"images": [{"url": image_url}]}
+        thread_post_1["assets"] = [{"image": {"url": image_url}}]
 
     # Thread post 2: hook text (or fallback to post_title) + link
     thread_post_2 = {
         "text": thread_2_text if thread_2_text else post_title,
-        "assets": {
-            "link": {"url": post_url},
-        },
+        "assets": [
+            {"link": {"url": post_url}},
+        ],
     }
 
     variables = {
@@ -345,7 +345,7 @@ def schedule_to_buffer_instagram(
             "channelId": channel_id,
             "schedulingType": "automatic",
             "mode": mode,
-            "assets": {"images": [{"url": image_url}]},
+            "assets": [{"image": {"url": image_url}}],
             "metadata": {
                 "instagram": {
                     "type": "post",
@@ -379,7 +379,7 @@ def schedule_to_buffer_x(
     # Thread post 1: social media text + featured image
     thread_post_1 = {"text": text}
     if image_url:
-        thread_post_1["assets"] = {"images": [{"url": image_url}]}
+        thread_post_1["assets"] = [{"image": {"url": image_url}}]
 
     # Thread post 2: hook text (or fallback to post_title) + URL inline
     lead_text = thread_2_text if thread_2_text else post_title
@@ -415,9 +415,10 @@ def _build_thread_from_posts(
     """Compose a thread payload from body posts + a final Source post.
 
     Body posts are passed through verbatim. A final post is always appended
-    with text "Source:\\n{source_url}". When ``link_attachment`` is True (for
-    Bluesky and Threads, which render link cards nicely), the source URL is
-    also attached as a link asset on that final post.
+    with text "Source: {source_url}" (URL on the same line as the label, single
+    space separator). When ``link_attachment`` is True (for Bluesky and Threads,
+    which render link cards nicely), the source URL is also attached as a link
+    asset on that final post.
 
     The featured ``image_url`` (if any) is attached to the FIRST body post.
     """
@@ -428,12 +429,12 @@ def _build_thread_from_posts(
     for i, text in enumerate(posts):
         post: dict = {"text": text}
         if i == 0 and image_url:
-            post["assets"] = {"images": [{"url": image_url}]}
+            post["assets"] = [{"image": {"url": image_url}}]
         thread.append(post)
 
-    source_post: dict = {"text": f"Source:\n{source_url}"}
+    source_post: dict = {"text": f"Source: {source_url}"}
     if link_attachment:
-        source_post["assets"] = {"link": {"url": source_url}}
+        source_post["assets"] = [{"link": {"url": source_url}}]
     thread.append(source_post)
 
     return thread
@@ -445,7 +446,7 @@ def schedule_thread_to_buffer_bluesky(
 ) -> str:
     """Schedule a multi-post thread to Buffer Bluesky channel.
 
-    ``posts`` is the list of body-post texts; a final "Source:\\n{url}" post
+    ``posts`` is the list of body-post texts; a final "Source: {url}" post
     with link-card attachment is appended automatically.
 
     Returns the Buffer post ID on success, or an error message.
@@ -476,7 +477,7 @@ def schedule_thread_to_buffer_x(
 ) -> str:
     """Schedule a multi-post thread to Buffer X (Twitter) channel.
 
-    ``posts`` is the list of body-post texts; a final "Source:\\n{url}" post
+    ``posts`` is the list of body-post texts; a final "Source: {url}" post
     is appended automatically (no link card — X expands the URL inline).
 
     Returns the Buffer post ID on success, or an error message.
@@ -507,7 +508,7 @@ def schedule_thread_to_buffer_threads(
 ) -> str:
     """Schedule a multi-post thread to Buffer Threads channel.
 
-    ``posts`` is the list of body-post texts; a final "Source:\\n{url}" post
+    ``posts`` is the list of body-post texts; a final "Source: {url}" post
     with link-card attachment is appended automatically. The Threads ``topic``
     is fixed to "Japan" (UJ standard).
 
@@ -543,7 +544,7 @@ def schedule_thread_to_buffer_mastodon(
 ) -> str:
     """Schedule a multi-post thread to Buffer Mastodon channel.
 
-    ``posts`` is the list of body-post texts; a final "Source:\\n{url}" post
+    ``posts`` is the list of body-post texts; a final "Source: {url}" post
     is appended automatically. Mastodon expands URLs inline (no link card).
 
     For single-post Mastodon scenarios, prefer ``schedule_to_buffer_mastodon``.
@@ -579,7 +580,7 @@ def schedule_thread_to_all_social(
 
     ``posts_by_platform`` maps platform name (lowercase: ``bluesky``,
     ``mastodon``, ``threads``, ``x``) to the list of body-post texts for
-    that platform. A "Source:\\n{url}" post is appended automatically on
+    that platform. A "Source: {url}" post is appended automatically on
     each platform that's a thread (all four when called via this helper).
 
     Returns a dict of platform → result string. Unlike

@@ -49,10 +49,6 @@ def schedule_from_review(review_path: str, drafts: bool = False) -> None:
             new_date = start_date + timedelta(days=offset)
             rows[idx]["last_posted_social"] = new_date.strftime("%m/%d/%Y")
 
-            # Clear static_text after scheduling
-            if post.get("is_static") and rows[idx].get("static_text"):
-                rows[idx]["static_text"] = ""
-
             if not best_text:
                 print(f"  SKIPPED (no text): {title}", file=sys.stderr)
                 results.append(f"SKIPPED: {title}")

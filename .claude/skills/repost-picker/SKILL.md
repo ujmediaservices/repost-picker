@@ -60,18 +60,32 @@ The review JSON contains:
 Read the review JSON. For each post where `is_static` is false (i.e., `social_text` is empty):
 
 1. **Calculate the character limit**:
-   - Bluesky hard limit: 300 characters total (text + 2 newlines + URL)
-   - `max_text_length = 300 - 2 - len(post.url)`
+   - X hard limit (binding): 280 characters total (text + 2 newlines + URL). Bluesky allows 300, but X is the tighter constraint, so target X.
+   - `max_text_length = 280 - 2 - len(post.url)`
 
 2. **Generate social media text** using the post's `content` field, `title`, the `examples_text` from the review JSON, and these editorial guidelines:
 
-   > Select an interesting fact or portion of this article from Unseen Japan for use as a social media post. Do not rephrase in your own words. Only change slightly to fit character count or to add missing post context (e.g., someone's full name), keeping original tone. Do not be overly promotional, cute, or use marketing jargon or emojis. Be factual, as we are a serious news and media organization. Reword phrases such as "recent" and "new" to avoid time references — e.g., instead of "a recent survey" or "a new survey," say "one survey."
+   > Select an interesting fact or portion of this article from Unseen Japan for use as a social media post. Do not rephrase in your own words. Only change slightly to fit character count or to add missing post context (e.g., someone's full name), keeping original tone. Do not be overly promotional, cute, or use marketing jargon or emojis. Be factual, as we are a serious news and media organization. Reword phrases such as "recent" and "new" to avoid time references (e.g., instead of "a recent survey" or "a new survey," say "one survey"). **Do not use em-dashes (—) anywhere in the social text.** Use periods, commas, colons, or parentheses instead. This applies even when the source article or style examples contain em-dashes.
 
    Think through several alternatives internally. Pick the single best one. Output only that text.
 
    **The text must be {max_text_length} characters or fewer.** Verify the count before finalizing.
 
 3. **Write the generated text** into the post's `social_text` field.
+
+4. **Fact-check the generated text in two passes.** Apply both passes to user-supplied edits during Phase 3 as well.
+
+   **Pass A — against article content.** For each named entity, number, date, or factual claim (names, years, statistics, locations, attribution), verify it appears in or is supported by the post's `content` field. Run a programmatic check (a Python loop searching `content` for each key term) so coverage is mechanical, not impressionistic. Flag any claim that:
+   - Doesn't appear in the article (potential hallucination)
+   - Contradicts the article
+   - Is more specific or stronger than the article supports (e.g., article says "after WWII", post says "in 1951")
+
+   **Pass B — against external sources.** For each load-bearing factual claim (years, named individuals, statistics, attribution of "firsts"), use WebSearch to verify against independent sources (Wikipedia, news, academic, official). Skip claims that are pure opinion, editorial framing, or service descriptions. Quote 1-2 corroborating sources per claim when confirming; flag any claim that:
+   - Cannot be independently corroborated
+   - Is contradicted by external sources (even if it matches the article)
+   - Has notable disagreement between sources (note the disagreement)
+
+   Present Pass A and Pass B results together as a table before Phase 3, with article passages or external citations for each claim. If a claim survives Pass A but fails Pass B, surface it explicitly and ask whether to revise.
 
 ### Phase 3: Review
 
@@ -80,7 +94,7 @@ Present ALL posts to the user in a numbered list showing:
 - Post URL
 - **Chosen image** (`alt_image`) that will be used on Mastodon/X/Threads, plus the count of additional candidates available (e.g., "image 1 of 3")
 - Social media text (generated or static)
-- Character count: `len(social_text) + 2 + len(url)` / 300
+- Character count: `len(social_text) + 2 + len(url)` / 280
 - Scheduling mode (and due_at if customScheduled)
 - Tags (if any)
 
@@ -100,7 +114,6 @@ python repost_schedule.py --review-file <review_json_path> [--drafts] [--debug]
 Pass `--drafts` if the user specified it. The script:
 - Schedules each post to Bluesky, Mastodon, Threads, and X via Buffer
 - Updates `last_posted_social` dates in the data file (startDate + offset days)
-- Clears `static_text` for static posts after scheduling
 - Re-sorts the data file by type (ascending) then date (descending)
 - Writes the data file with blank lines between type groups
 
@@ -150,4 +163,4 @@ Read the script's stdout output and present a summary to the user:
 | `type` | Post type string matched against config |
 | `url` | Public URL of the post |
 | `last_posted_social` | Date last shared (MM/DD/YYYY) |
-| `static_text` | If non-empty, used as social text instead of generating. Cleared after scheduling. |
+| `static_text` | If non-empty, used as social text instead of generating. Persists across scheduling runs — the same canned copy is reused each cycle. |

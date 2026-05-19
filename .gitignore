@@ -4,4 +4,5 @@ __pycache__/
 .venv/
 .env
 .claude/settings.local.json
+.claude/worktrees/
 tmp/
